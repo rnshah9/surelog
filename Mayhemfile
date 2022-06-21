@@ -1,6 +1,5 @@
-project: rnshah9/surelog
+project: surelog
 target: surelog
-tests: null
 
 cmds:
   - cmd: /repo/build/bin/surelog -f @@
