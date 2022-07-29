@@ -2,4 +2,4 @@ project: surelog
 target: surelog
 
 cmds:
-  - cmd: /repo/build/bin/surelog -f @@
+  - cmd: /install/bin/surelog -f @@
