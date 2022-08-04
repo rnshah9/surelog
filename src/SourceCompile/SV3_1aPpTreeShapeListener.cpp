@@ -103,7 +103,12 @@ void SV3_1aPpTreeShapeListener::enterNumber(
   if (m_inActiveBranch &&
       (!(m_filterProtectedRegions && m_inProtectedRegion))) {
     if (!m_inMacroDefinitionParsing) {
-      std::string text = ctx->Number()->getText();
+      std::string text;
+      if (ctx->Number()) {
+        text = ctx->Number()->getText();
+      } else {
+        text = ctx->getText();
+      }
       std::string text2;
       bool firstNonSpace = false;
       unsigned int size = text.size();
@@ -160,7 +165,11 @@ void SV3_1aPpTreeShapeListener::exitNumber(SV3_1aPpParser::NumberContext *ctx) {
   if (m_inActiveBranch &&
       (!(m_filterProtectedRegions && m_inProtectedRegion))) {
     if (!m_inMacroDefinitionParsing) {
-      std::string text = ctx->Number()->getText();
+      std::string text;
+      if (ctx->Number())
+        text = ctx->Number()->getText();
+      else
+        text = ctx->getText();
       addVObject(ctx, text, VObjectType::slNumber);
     }
   }
@@ -1149,13 +1158,11 @@ void SV3_1aPpTreeShapeListener::enterEndif_directive(
     if (ctx->One_line_comment()) {
       addLineFiller(ctx);
     }
-    while (unroll) {
+    while (unroll && (!stack.empty())) {
       PreprocessFile::IfElseItem &item = stack.back();
       switch (item.m_type) {
         case PreprocessFile::IfElseItem::IFDEF:
         case PreprocessFile::IfElseItem::IFNDEF:
-          // std::cout << "STACK SIZE: " << m_pp->getStack ().size () <<
-          // std::endl;
           m_inActiveBranch = item.m_previousActiveState;
           stack.pop_back();
           unroll = false;
@@ -1165,6 +1172,7 @@ void SV3_1aPpTreeShapeListener::enterEndif_directive(
           stack.pop_back();
           break;
         default:
+          unroll = false;
           break;
       }
     }

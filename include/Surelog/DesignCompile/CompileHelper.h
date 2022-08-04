@@ -134,7 +134,7 @@ class CompileHelper final {
 
   bool compileDataDeclaration(DesignComponent* component, const FileContent* fC,
                               NodeId id, bool interface,
-                              CompileDesign* compileDesign, bool reduce);
+                              CompileDesign* compileDesign, bool reduce, UHDM::VectorOfattribute* attributes);
 
   // ------------------------------------------------------------------------------------------
   // UHDM modeling
@@ -189,11 +189,11 @@ class CompileHelper final {
 
   bool compileTask(DesignComponent* component, const FileContent* fC,
                    NodeId nodeId, CompileDesign* compileDesign,
-                   ValuedComponentI* instance, bool isMethod = false);
+                   ValuedComponentI* instance, bool isMethod = false, bool reduce = false);
 
   bool compileFunction(DesignComponent* component, const FileContent* fC,
                        NodeId nodeId, CompileDesign* compileDesign,
-                       ValuedComponentI* instance, bool isMethod = false);
+                       ValuedComponentI* instance, bool isMethod = false, bool reduce = false);
 
   bool compileAssertionItem(DesignComponent* component, const FileContent* fC,
                             NodeId nodeId, CompileDesign* compileDesign);
@@ -224,7 +224,7 @@ class CompileHelper final {
                                  const FileContent* fC, NodeId nodeId,
                                  CompileDesign* compileDesign,
                                  UHDM::any* pstmt = nullptr,
-                                 ValuedComponentI* instance = nullptr);
+                                 ValuedComponentI* instance = nullptr, bool reduce = false);
 
   UHDM::any* compileVariable(DesignComponent* component, const FileContent* fC,
                              NodeId nodeId, CompileDesign* compileDesign,
@@ -325,7 +325,7 @@ class CompileHelper final {
   UHDM::VectorOfany* compileDataDeclaration(
       DesignComponent* component, const FileContent* fC, NodeId nodeId,
       CompileDesign* compileDesign, UHDM::any* pstmt = nullptr,
-      ValuedComponentI* instance = nullptr);
+      ValuedComponentI* instance = nullptr, bool reduce = false);
 
   UHDM::any* compileForLoop(DesignComponent* component, const FileContent* fC,
                             NodeId nodeId, CompileDesign* compileDesign);

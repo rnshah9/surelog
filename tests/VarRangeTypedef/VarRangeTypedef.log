@@ -1,4 +1,4 @@
-[INF:CM0023] Creating log file ../../build/tests/VarRangeTypedef/slpp_all/surelog.log.
+[INF:CM0023] Creating log file ../../build/regression/VarRangeTypedef/slpp_all/surelog.log.
 
 LIB:  work
 FILE: dut.sv
@@ -65,11 +65,11 @@ n<> u<42> t<Top_level_rule> c<1> l<1:1> el<8:1>
 
 [INF:UH0707] Elaborating UHDM...
 
-[INF:UH0708] Writing UHDM DB: ../../build/tests/VarRangeTypedef/slpp_all/surelog.uhdm ...
+[INF:UH0708] Writing UHDM DB: ../../build/regression/VarRangeTypedef/slpp_all/surelog.uhdm ...
 
-[INF:UH0709] Writing UHDM Html Coverage: ../../build/tests/VarRangeTypedef/slpp_all/surelog.uhdm.chk.html ...
+[INF:UH0709] Writing UHDM Html Coverage: ../../build/regression/VarRangeTypedef/slpp_all/surelog.uhdm.chk.html ...
 
-[INF:UH0710] Loading UHDM DB: ../../build/tests/VarRangeTypedef/slpp_all/surelog.uhdm ...
+[INF:UH0710] Loading UHDM DB: ../../build/regression/VarRangeTypedef/slpp_all/surelog.uhdm ...
 
 [INF:UH0711] Decompiling UHDM...
 
@@ -78,24 +78,28 @@ design: (unnamed)
 |vpiElaborated:1
 |vpiName:unnamed
 |uhdmallPackages:
-\_package: pkg (pkg::) dut.sv:1:1: , endln:6:11, parent:unnamed
+\_package: pkg (pkg::), file:dut.sv, line:1:1, endln:6:11
+  |vpiParent:
+  \_design: (unnamed)
   |vpiName:pkg
   |vpiFullName:pkg::
   |vpiTypedef:
-  \_struct_typespec: (pkg::a), line:2:12, endln:2:18, parent:pkg::
+  \_struct_typespec: (pkg::a), line:2:12, endln:2:18
+    |vpiParent:
+    \_package: pkg (pkg::), file:dut.sv, line:1:1, endln:6:11
     |vpiName:pkg::a
     |vpiInstance:
-    \_package: pkg (pkg::) dut.sv:1:1: , endln:6:11, parent:unnamed
-    |vpiParent:
-    \_package: pkg (pkg::) dut.sv:1:1: , endln:6:11, parent:unnamed
+    \_package: pkg (pkg::), file:dut.sv, line:1:1, endln:6:11
     |vpiPacked:1
     |vpiTypespecMember:
-    \_typespec_member: (x), line:3:16, endln:3:17, parent:pkg::a
+    \_typespec_member: (x), line:3:16, endln:3:17
       |vpiParent:
-      \_struct_typespec: (pkg::a), line:2:12, endln:2:18, parent:pkg::
+      \_struct_typespec: (pkg::a), line:2:12, endln:2:18
       |vpiName:x
       |vpiTypespec:
       \_logic_typespec: , line:3:7, endln:3:12
+        |vpiParent:
+        \_typespec_member: (x), line:3:16, endln:3:17
         |vpiInstance:
         \_package: (pkg), file:
       |vpiRefFile:dut.sv
@@ -104,78 +108,80 @@ design: (unnamed)
       |vpiRefEndLineNo:3
       |vpiRefEndColumnNo:12
   |vpiDefName:pkg
+|uhdmtopPackages:
+\_package: pkg (pkg::), file:dut.sv, line:1:1, endln:6:11
   |vpiParent:
   \_design: (unnamed)
-|uhdmtopPackages:
-\_package: pkg (pkg::) dut.sv:1:1: , endln:6:11, parent:unnamed
   |vpiName:pkg
   |vpiFullName:pkg::
   |vpiTypedef:
-  \_struct_typespec: (pkg::a), line:2:12, endln:2:18, parent:pkg::
+  \_struct_typespec: (pkg::a), line:2:12, endln:2:18
+    |vpiParent:
+    \_package: pkg (pkg::), file:dut.sv, line:1:1, endln:6:11
     |vpiName:pkg::a
     |vpiInstance:
-    \_package: pkg (pkg::) dut.sv:1:1: , endln:6:11, parent:unnamed
-    |vpiParent:
-    \_package: pkg (pkg::) dut.sv:1:1: , endln:6:11, parent:unnamed
+    \_package: pkg (pkg::), file:dut.sv, line:1:1, endln:6:11
     |vpiPacked:1
     |vpiTypespecMember:
-    \_typespec_member: (x), line:3:16, endln:3:17, parent:pkg::a
+    \_typespec_member: (x), line:3:16, endln:3:17
       |vpiParent:
-      \_struct_typespec: (pkg::a), line:2:12, endln:2:18, parent:pkg::
+      \_struct_typespec: (pkg::a), line:2:12, endln:2:18
       |vpiName:x
       |vpiTypespec:
       \_logic_typespec: , line:3:7, endln:3:12
+        |vpiParent:
+        \_typespec_member: (x), line:3:16, endln:3:17
         |vpiInstance:
-        \_package: pkg (pkg::) dut.sv:1:1: , endln:6:11, parent:unnamed
+        \_package: pkg (pkg::), file:dut.sv, line:1:1, endln:6:11
       |vpiRefFile:dut.sv
       |vpiRefLineNo:3
       |vpiRefColumnNo:7
       |vpiRefEndLineNo:3
       |vpiRefEndColumnNo:12
   |vpiTypedef:
-  \_array_typespec: (pkg::b), parent:pkg::
+  \_array_typespec: (pkg::b)
+    |vpiParent:
+    \_package: pkg (pkg::), file:dut.sv, line:1:1, endln:6:11
     |vpiName:pkg::b
     |vpiInstance:
-    \_package: pkg (pkg::) dut.sv:1:1: , endln:6:11, parent:unnamed
-    |vpiParent:
-    \_package: pkg (pkg::) dut.sv:1:1: , endln:6:11, parent:unnamed
+    \_package: pkg (pkg::), file:dut.sv, line:1:1, endln:6:11
     |vpiRange:
-    \_range: , line:5:16, endln:5:19
+    \_range: , line:5:15, endln:5:20
       |vpiLeftRange:
       \_constant: , line:5:16, endln:5:17
+        |vpiParent:
+        \_range: , line:5:15, endln:5:20
         |vpiDecompile:5
         |vpiSize:64
         |UINT:5
-        |vpiParent:
-        \_range: , line:5:16, endln:5:19
         |vpiConstType:9
       |vpiRightRange:
       \_constant: , line:5:18, endln:5:19
+        |vpiParent:
+        \_range: , line:5:15, endln:5:20
         |vpiDecompile:0
         |vpiSize:64
         |UINT:0
-        |vpiParent:
-        \_range: , line:5:16, endln:5:19
         |vpiConstType:9
     |vpiElemTypespec:
     \_struct_typespec: (pkg::a), line:2:12, endln:2:18
       |vpiName:pkg::a
       |vpiTypedefAlias:
-      \_struct_typespec: (pkg::a), line:2:12, endln:2:18, parent:pkg::
+      \_struct_typespec: (pkg::a), line:2:12, endln:2:18
       |vpiInstance:
-      \_package: pkg (pkg::) dut.sv:1:1: , endln:6:11, parent:unnamed
+      \_package: pkg (pkg::), file:dut.sv, line:1:1, endln:6:11
       |vpiPacked:1
       |vpiTypespecMember:
-      \_typespec_member: (x), line:3:16, endln:3:17, parent:pkg::a
+      \_typespec_member: (x), line:3:16, endln:3:17
         |vpiParent:
         \_struct_typespec: (pkg::a), line:2:12, endln:2:18
         |vpiName:x
         |vpiTypespec:
-        \_logic_typespec: , line:3:7, endln:3:12, parent:x
-          |vpiInstance:
-          \_package: pkg (pkg::) dut.sv:1:1: , endln:6:11, parent:unnamed
+        \_logic_typespec: , line:3:7, endln:3:12
           |vpiParent:
-          \_typespec_member: (x), line:3:16, endln:3:17, parent:pkg::a
+          \_typespec_member: (x), line:3:16, endln:3:17
+          |vpiInstance:
+          \_package: pkg (pkg::), file:dut.sv, line:1:1, endln:6:11
         |vpiRefFile:dut.sv
         |vpiRefLineNo:3
         |vpiRefColumnNo:7
@@ -183,12 +189,13 @@ design: (unnamed)
         |vpiRefEndColumnNo:12
   |vpiDefName:pkg
   |vpiTop:1
-  |vpiParent:
-  \_design: (unnamed)
 ===================
 [  FATAL] : 0
 [ SYNTAX] : 0
 [  ERROR] : 0
 [WARNING] : 1
 [   NOTE] : 4
+
+
+[roundtrip]: ${SURELOG_DIR}/tests/VarRangeTypedef/dut.sv | ${SURELOG_DIR}/build/regression/VarRangeTypedef/roundtrip/dut_000.sv | 1 | 6 | 
 

@@ -187,13 +187,15 @@ bool CompilePackage::collectObjects_(CollectType collectType, bool reduce) {
         case VObjectType::slTask_declaration: {
           // Called twice, placeholder first, then definition
           if (collectType == CollectType::OTHER) break;
-          m_helper.compileTask(m_package, fC, id, m_compileDesign, nullptr);
+          m_helper.compileTask(m_package, fC, id, m_compileDesign, nullptr,
+                               false, true);
           break;
         }
         case VObjectType::slFunction_declaration: {
           // Called twice, placeholder first, then definition
           if (collectType == CollectType::OTHER) break;
-          m_helper.compileFunction(m_package, fC, id, m_compileDesign, nullptr);
+          m_helper.compileFunction(m_package, fC, id, m_compileDesign, nullptr,
+                                   false, true);
           break;
         }
         case VObjectType::slLet_declaration: {
@@ -234,12 +236,20 @@ bool CompilePackage::collectObjects_(CollectType collectType, bool reduce) {
           if (collectType != CollectType::DEFINITION) break;
           m_helper.compileNetDeclaration(m_package, fC, id, false,
                                          m_compileDesign);
+          m_attributes = nullptr;
           break;
         }
         case VObjectType::slData_declaration: {
           if (collectType != CollectType::DEFINITION) break;
-          m_helper.compileDataDeclaration(m_package, fC, id, false,
-                                          m_compileDesign, reduce);
+          m_helper.compileDataDeclaration(
+              m_package, fC, id, false, m_compileDesign, reduce, m_attributes);
+          m_attributes = nullptr;
+          break;
+        }
+        case VObjectType::slAttribute_instance: {
+          if (collectType != CollectType::DEFINITION) break;
+          m_attributes =
+              m_helper.compileAttributes(m_package, fC, id, m_compileDesign);
           break;
         }
         case VObjectType::slDpi_import_export: {

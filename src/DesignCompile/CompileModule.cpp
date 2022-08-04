@@ -24,6 +24,7 @@
 #include <Surelog/CommandLine/CommandLineParser.h>
 #include <Surelog/Design/FileContent.h>
 #include <Surelog/Design/ModuleDefinition.h>
+#include <Surelog/Design/ModuleInstance.h>
 #include <Surelog/DesignCompile/CompileDesign.h>
 #include <Surelog/DesignCompile/CompileModule.h>
 #include <Surelog/ErrorReporting/ErrorContainer.h>
@@ -77,6 +78,7 @@ bool CompileModule::compile() {
     case VObjectType::slGenerate_interface_block:
     case VObjectType::slGenerate_interface_item:
     case VObjectType::slGenerate_interface_named_block:
+    case VObjectType::slGenerate_region:
       errType = ErrorDefinition::COMP_COMPILE_GENERATE_BLOCK;
       break;
     case VObjectType::slInterface_declaration:
@@ -94,15 +96,45 @@ bool CompileModule::compile() {
 
   m_module->setDesignElement(fC->getDesignElement(m_module->getName()));
 
+  CommandLineParser* clp =
+      m_compileDesign->getCompiler()->getCommandLineParser();
+  std::set<std::string>& blackboxModules = clp->getBlackBoxModules();
+  bool skipModule = false;
+  std::string libName;
+  if (!m_module->getFileContents().empty())
+    libName = m_module->getFileContents()[0]->getLibrary()->getName();
+  const std::string& modName = m_module->getName();
+  if (blackboxModules.find(modName) != blackboxModules.end()) {
+    errType = ErrorDefinition::COMP_SKIPPING_BLACKBOX_MODULE;
+    skipModule = true;
+  }
+  std::set<std::string>& blackboxInstances = clp->getBlackBoxInstances();
+  std::string instanceName;
+  if (m_instance) {
+    if (ModuleInstance* inst =
+            valuedcomponenti_cast<ModuleInstance*>(m_instance)) {
+      instanceName = inst->getFullPathName();
+    }
+  }
+  if (blackboxInstances.find(instanceName) != blackboxInstances.end()) {
+    errType = ErrorDefinition::COMP_SKIPPING_BLACKBOX_INSTANCE;
+    skipModule = true;
+  }
+  if (blackboxInstances.find(modName) != blackboxInstances.end()) {
+    errType = ErrorDefinition::COMP_SKIPPING_BLACKBOX_INSTANCE;
+    skipModule = true;
+  }
+
   Error err(errType, loc);
   ErrorContainer* errors = new ErrorContainer(m_symbols);
-  errors->registerCmdLine(
-      m_compileDesign->getCompiler()->getCommandLineParser());
+  errors->registerCmdLine(clp);
   errors->addError(err);
-  errors->printMessage(
-      err,
-      m_compileDesign->getCompiler()->getCommandLineParser()->muteStdout());
+  errors->printMessage(err, clp->muteStdout());
   delete errors;
+
+  if (skipModule) {
+    return true;
+  }
 
   switch (moduleType) {
     case VObjectType::slModule_declaration:
@@ -120,6 +152,7 @@ bool CompileModule::compile() {
     case VObjectType::slGenerate_module_block:
     case VObjectType::slGenerate_module_item:
     case VObjectType::slGenerate_module_named_block:
+    case VObjectType::slGenerate_region:
       if (!collectModuleObjects_(CollectType::FUNCTION)) return false;
       if (!collectModuleObjects_(CollectType::DEFINITION)) return false;
       if (!collectModuleObjects_(CollectType::OTHER)) return false;
@@ -210,11 +243,7 @@ bool CompileModule::collectUdpObjects_() {
         while (port) {
           UHDM::io_decl* io = s.MakeIo_decl();
           const std::string& name = fC->SymName(port);
-          io->VpiFile(fC->getFileName());
-          io->VpiLineNo(fC->Line(port));
-          io->VpiColumnNo(fC->Column(port));
-          io->VpiEndLineNo(fC->EndLine(port));
-          io->VpiEndColumnNo(fC->EndColumn(port));
+          fC->populateCoreMembers(port, port, io);
           io->VpiName(name);
           io->VpiParent(defn);
           ios->push_back(io);
@@ -236,11 +265,7 @@ bool CompileModule::collectUdpObjects_() {
         const std::string& outputname = fC->SymName(Output);
         std::vector<UHDM::io_decl*>* ios = defn->Io_decls();
         UHDM::logic_net* net = s.MakeLogic_net();
-        net->VpiFile(fC->getFileName());
-        net->VpiLineNo(fC->Line(id));
-        net->VpiColumnNo(fC->Column(id));
-        net->VpiEndLineNo(fC->EndLine(id));
-        net->VpiEndColumnNo(fC->EndColumn(id));
+        fC->populateCoreMembers(id, id, net);
         net->Attributes(attributes);
         net->VpiParent(defn);
         if (ios) {
@@ -272,11 +297,7 @@ bool CompileModule::collectUdpObjects_() {
           std::vector<UHDM::io_decl*>* ios = defn->Io_decls();
           if (ios) {
             UHDM::logic_net* net = s.MakeLogic_net();
-            net->VpiFile(fC->getFileName());
-            net->VpiLineNo(fC->Line(id));
-            net->VpiColumnNo(fC->Column(id));
-            net->VpiEndLineNo(fC->EndLine(id));
-            net->VpiEndColumnNo(fC->EndColumn(id));
+            fC->populateCoreMembers(id, id, net);
             net->Attributes(attributes);
             net->VpiParent(defn);
             for (auto io : *ios) {
@@ -332,11 +353,7 @@ bool CompileModule::collectUdpObjects_() {
         entry->VpiParent(defn);
         entry->VpiValue(ventry);
         entry->VpiSize(nb);
-        entry->VpiFile(fC->getFileName());
-        entry->VpiLineNo(fC->Line(Level_input_list));
-        entry->VpiColumnNo(fC->Column(Level_input_list));
-        entry->VpiEndLineNo(fC->EndLine(Level_input_list));
-        entry->VpiEndColumnNo(fC->EndColumn(Level_input_list));
+        fC->populateCoreMembers(Level_input_list, Level_input_list, entry);
         entries->push_back(entry);
         break;
       }
@@ -433,11 +450,7 @@ bool CompileModule::collectUdpObjects_() {
         entry->VpiParent(defn);
         entry->VpiValue(ventry);
         entry->VpiSize(nb);
-        entry->VpiFile(fC->getFileName());
-        entry->VpiLineNo(fC->Line(Level_input_list));
-        entry->VpiColumnNo(fC->Column(Level_input_list));
-        entry->VpiEndLineNo(fC->EndLine(Level_input_list));
-        entry->VpiEndColumnNo(fC->EndColumn(Level_input_list));
+        fC->populateCoreMembers(Level_input_list, Level_input_list, entry);
         entries->push_back(entry);
         break;
       }
@@ -445,11 +458,7 @@ bool CompileModule::collectUdpObjects_() {
         NodeId Identifier = fC->Child(id);
         NodeId Value = fC->Sibling(Identifier);
         UHDM::initial* init = s.MakeInitial();
-        init->VpiFile(fC->getFileName());
-        init->VpiLineNo(fC->Line(id));
-        init->VpiColumnNo(fC->Column(id));
-        init->VpiEndLineNo(fC->EndLine(id));
-        init->VpiEndColumnNo(fC->EndColumn(id));
+        fC->populateCoreMembers(id, id, init);
         init->VpiParent(defn);
         defn->Initial(init);
         UHDM::assign_stmt* assign_stmt = s.MakeAssign_stmt();
@@ -457,17 +466,9 @@ bool CompileModule::collectUdpObjects_() {
         UHDM::ref_obj* ref = s.MakeRef_obj();
         ref->VpiName(fC->SymName(Identifier));
         ref->VpiParent(assign_stmt);
-        ref->VpiFile(fC->getFileName());
-        ref->VpiLineNo(fC->Line(Identifier));
-        ref->VpiColumnNo(fC->Column(Identifier));
-        ref->VpiEndLineNo(fC->EndLine(Identifier));
-        ref->VpiEndColumnNo(fC->EndColumn(Identifier));
+        fC->populateCoreMembers(Identifier, Identifier, ref);
         assign_stmt->Lhs(ref);
-        assign_stmt->VpiFile(fC->getFileName());
-        assign_stmt->VpiLineNo(fC->Line(id));
-        assign_stmt->VpiColumnNo(fC->Column(id));
-        assign_stmt->VpiEndLineNo(fC->EndLine(id));
-        assign_stmt->VpiEndColumnNo(fC->EndColumn(id));
+        fC->populateCoreMembers(id, id, assign_stmt);
         assign_stmt->VpiParent(init);
         UHDM::constant* c = s.MakeConstant();
         assign_stmt->Rhs(c);
@@ -477,11 +478,7 @@ bool CompileModule::collectUdpObjects_() {
         c->VpiSize(64);
         c->VpiConstType(vpiUIntConst);
         c->VpiParent(assign_stmt);
-        c->VpiFile(fC->getFileName());
-        c->VpiLineNo(fC->Line(Value));
-        c->VpiColumnNo(fC->Column(Value));
-        c->VpiEndLineNo(fC->EndLine(Value));
-        c->VpiEndColumnNo(fC->EndColumn(Value));
+        fC->populateCoreMembers(Value, Value, c);
         break;
       }
       default:
@@ -505,7 +502,8 @@ bool CompileModule::collectModuleObjects_(CollectType collectType) {
       VObjectType::slModule_declaration,
       VObjectType::slClass_declaration,
       VObjectType::slFunction_body_declaration,
-      VObjectType::slTask_body_declaration};
+      VObjectType::slTask_body_declaration,
+      VObjectType::slGenerate_region};
 
   for (unsigned int i = 0; i < m_module->m_fileContents.size(); i++) {
     const FileContent* fC = m_module->m_fileContents[i];
@@ -573,6 +571,7 @@ bool CompileModule::collectModuleObjects_(CollectType collectType) {
         case VObjectType::slAnsi_port_declaration: {
           if (collectType != CollectType::DEFINITION) break;
           m_helper.compileAnsiPortDeclaration(m_module, fC, id, port_direction);
+          m_attributes = nullptr;
           break;
         }
         case VObjectType::slPort: {
@@ -584,6 +583,7 @@ bool CompileModule::collectModuleObjects_(CollectType collectType) {
           m_helper.compilePortDeclaration(m_module, fC, id, m_compileDesign,
                                           port_direction,
                                           m_hasNonNullPort || (m_nbPorts > 1));
+          m_attributes = nullptr;
           break;
         }
         case VObjectType::slInput_declaration:
@@ -592,6 +592,7 @@ bool CompileModule::collectModuleObjects_(CollectType collectType) {
           if (collectType != CollectType::DEFINITION) break;
           m_helper.compilePortDeclaration(m_module, fC, id, m_compileDesign,
                                           port_direction, m_hasNonNullPort);
+          m_attributes = nullptr;
           break;
         }
         case VObjectType::slClocking_declaration: {
@@ -603,18 +604,27 @@ bool CompileModule::collectModuleObjects_(CollectType collectType) {
           if (collectType != CollectType::DEFINITION) break;
           m_helper.compileNetDeclaration(m_module, fC, id, false,
                                          m_compileDesign);
+          m_attributes = nullptr;
           break;
         }
         case VObjectType::slData_declaration: {
           if (collectType != CollectType::DEFINITION) break;
           m_helper.compileDataDeclaration(m_module, fC, id, false,
-                                          m_compileDesign, false);
+                                          m_compileDesign, false, m_attributes);
+          m_attributes = nullptr;
+          break;
+        }
+        case VObjectType::slAttribute_instance: {
+          if (collectType != CollectType::DEFINITION) break;
+          m_attributes =
+              m_helper.compileAttributes(m_module, fC, id, m_compileDesign);
           break;
         }
         case VObjectType::slPort_declaration: {
           if (collectType != CollectType::DEFINITION) break;
           m_helper.compilePortDeclaration(m_module, fC, id, m_compileDesign,
                                           port_direction, m_hasNonNullPort);
+          m_attributes = nullptr;
           break;
         }
         case VObjectType::slContinuous_assign: {
@@ -925,21 +935,37 @@ bool CompileModule::collectInterfaceObjects_(CollectType collectType) {
           }
           break;
         }
+        case VObjectType::slPort_declaration: {
+          if (collectType != CollectType::DEFINITION) break;
+          m_helper.compilePortDeclaration(m_module, fC, id, m_compileDesign,
+                                          port_direction, m_hasNonNullPort);
+          m_attributes = nullptr;
+          break;
+        }
         case VObjectType::slAnsi_port_declaration: {
           if (collectType != CollectType::DEFINITION) break;
           m_helper.compileAnsiPortDeclaration(m_module, fC, id, port_direction);
+          m_attributes = nullptr;
           break;
         }
         case VObjectType::slNet_declaration: {
           if (collectType != CollectType::DEFINITION) break;
           m_helper.compileNetDeclaration(m_module, fC, id, true,
                                          m_compileDesign);
+          m_attributes = nullptr;
           break;
         }
         case VObjectType::slData_declaration: {
           if (collectType != CollectType::DEFINITION) break;
           m_helper.compileDataDeclaration(m_module, fC, id, true,
-                                          m_compileDesign, false);
+                                          m_compileDesign, false, m_attributes);
+          m_attributes = nullptr;
+          break;
+        }
+        case VObjectType::slAttribute_instance: {
+          if (collectType != CollectType::DEFINITION) break;
+          m_attributes =
+              m_helper.compileAttributes(m_module, fC, id, m_compileDesign);
           break;
         }
         case VObjectType::slContinuous_assign: {

@@ -214,6 +214,12 @@ class CommandLineParser final {
   std::filesystem::path getExePath() const { return m_exePath; }
   std::string getExeCommand() const { return m_exeCommand; }
   std::set<std::string>& getTopLevelModules() { return m_topLevelModules; }
+  std::set<std::string>& getBlackBoxModules() { return m_blackboxModules; }
+  std::set<std::string>& getBlackBoxInstances() { return m_blackboxInstances; }
+  void setTopLevelModule(const std::string& module) { m_topLevelModules.insert(module); }
+  void setBlackBoxModule(const std::string& module) { m_blackboxModules.insert(module); }
+  void setBlackBoxInstance(const std::string& instance) { m_blackboxInstances.insert(instance); }
+
   bool fullSVMode() const { return m_sverilog; }
   void fullSVMode(bool sverilog) { m_sverilog = sverilog; }
   bool isSVFile(const std::filesystem::path& fileName) const;
@@ -223,7 +229,8 @@ class CommandLineParser final {
   CommandLineParser(const CommandLineParser& orig) = delete;
 
   bool plus_arguments_(const std::string& s);
-  void processArgs_(std::vector<std::string>& args,
+  void processOutputDirectory_(const std::vector<std::string>& args);
+  void processArgs_(const std::vector<std::string>& args,
                     std::vector<std::string>& container);
   void splitPlusArg_(const std::string& s, const std::string& prefix,
                      std::vector<SymbolId>& container);
@@ -308,11 +315,12 @@ class CommandLineParser final {
   bool m_profile;
   bool m_parseBuiltIn;
   bool m_ppOutputFileLocation;
-  bool m_logFileSpecified;
   std::filesystem::path m_builtinPath;
   std::filesystem::path m_exePath;
   std::string m_exeCommand;
   std::set<std::string> m_topLevelModules;
+  std::set<std::string> m_blackboxModules;
+  std::set<std::string> m_blackboxInstances;
   bool m_sverilog;
   bool m_dumpUhdm;
   bool m_elabUhdm;

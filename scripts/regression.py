@@ -11,6 +11,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tarfile
 import time
 import traceback
 from collections import OrderedDict
@@ -65,6 +66,10 @@ class Status(Enum):
     return str(self.name)
 
 
+def _is_ci_build():
+  return 'GITHUB_JOB' in os.environ
+
+
 def _transform_path(path):
   if 'MSYSTEM' not in os.environ:
     return path
@@ -115,7 +120,7 @@ def _rmdir(dirpath, retries=10):
   return not os.path.exists(dirpath)
 
 
-def _rmdir_recursively(dirpath, patterns):
+def _rmtree(dirpath, patterns):
   for pattern in patterns:
     for path in Path(dirpath).rglob(pattern):
       if os.path.isdir(path):
@@ -181,6 +186,11 @@ def _restore_directory_state(dirpath, golden_snapshot, output_dirpath, current_s
       except:
         print(f'Failed to move {path} to {dst_abs_path}')
         traceback.print_exc()
+
+
+def _generate_tarball(dirpath):
+  with tarfile.open(dirpath + '.tgz', 'w:gz', format=tarfile.GNU_FORMAT) as tarball:
+    tarball.add(dirpath, arcname=os.path.basename(dirpath), recursive=True)
 
 
 def _normalize_log(content, path_mappings):
@@ -290,8 +300,14 @@ def _run_surelog(
       cmdline = cmdline.replace('*/*.sv', ' '.join(_find_files(dirpath, '*.sv')))
     if '-mt' in cmdline:
       cmdline = re.sub('-mt\s+(max|\d+)', '', cmdline)
-    if mp > 0:
+
+    if mp and ((mp == 'max') or (mp.isnumeric() and int(mp) > 0)):
+      cmdline = re.sub('-mp\s+(max|\d+)', '', cmdline)  # Option overridden from command prompt
+    if mp or ('-mp' in cmdline):
       cmdline = cmdline.replace('-nocache', '')
+    if '-lowmem' in cmdline:
+      cmdline = re.sub('-mp\s+(max|\d+)', '', cmdline)
+      mp = '1'
 
     parts = cmdline.split(' ')
     for i in range(0, len(parts)):
@@ -299,16 +315,16 @@ def _run_surelog(
           if parts[i].endswith('.v') or parts[i].endswith('.sv') or parts[i].endswith('.pkg'):
             parts[i] = ' '.join(_find_files(dirpath, parts[i]))
 
+    parts += ['-mt', (mt or '0')]
+    if mp or '-mp' not in cmdline:
+      parts += ['-mp', (mp or '0')]
+
     rel_output_dirpath = os.path.relpath(output_dirpath, dirpath)
     if 'MSYSTEM' in os.environ:
       rel_output_dirpath = rel_output_dirpath.replace('\\', '/')
+    parts += ['-o', rel_output_dirpath]
 
-    cmdline = ' '.join([part for part in parts if part] + [
-      '-mt', str(mt),
-      '-mp', '1' if '-lowmem' in cmdline else str(mp),
-      '-o', rel_output_dirpath
-    ])
-    cmdline = ' '.join(['"' + arg + '"' if '"' in arg else arg for arg in cmdline.split() if arg])
+    cmdline = ' '.join(['"' + part + '"' if '"' in part else part for part in parts if part])
     print(f'Processed command line: {cmdline}')
 
     args = tool_args_list + [surelog_filepath] + cmdline.split()
@@ -423,11 +439,6 @@ def _run_uhdm_dump(
 
     uhdm_dump_log_strm.flush()
 
-  # Go ahead and delete the file if it's too large. CI build tends to run out of disk space.
-  if os.path.isfile(uhdm_dump_log_filepath) and \
-      os.path.getsize(uhdm_dump_log_filepath) > (128 * 1024 * 1024):
-    os.remove(uhdm_dump_log_filepath)
-
   end_dt = datetime.now()
   delta = end_dt - start_dt
   print(f'end-time: {str(end_dt)} {str(delta)}')
@@ -508,7 +519,7 @@ def _run_one(params):
   roundtrip_output_dirpath = os.path.join(output_dirpath, 'roundtrip')
   roundtrip_log_filepath = os.path.join(roundtrip_output_dirpath, 'roundtrip.log')
 
-  _rmdir_recursively(dirpath, ['slpp_all', 'slpp_unit'])
+  _rmtree(dirpath, ['slpp_all', 'slpp_unit'])
   _rmdir(output_dirpath)
   _mkdir(output_dirpath)
   _mkdir(roundtrip_output_dirpath)
@@ -552,7 +563,7 @@ def _run_one(params):
     print(f'Found {len(golden_snapshot)} files & directories')
     print('\n')
 
-    print('Running Surelog ...')
+    print('Running Surelog ...', flush=True)
     result.update(_run_surelog(
         name, filepath, dirpath, workspace_dirpath, surelog_filepath,
         surelog_log_filepath, uvm_reldirpath, mp, mt, tool, output_dirpath))
@@ -570,7 +581,7 @@ def _run_one(params):
         print(f'File not found: {uhdm_slpp_unit_filepath}')
 
     if uhdm_src_filepath and result['STATUS'] == Status.PASS:
-      print('Running uhdm-dump ...')
+      print('Running uhdm-dump ...', flush=True)
       result.update(_run_uhdm_dump(
           name, uhdm_dump_filepath, uhdm_src_filepath, uhdm_dump_log_filepath, output_dirpath))
       print('\n')
@@ -578,7 +589,7 @@ def _run_one(params):
 
     roundtrip_content = None
     if uhdm_src_filepath and result['STATUS'] == Status.PASS:
-      print('Running roundtrip ...')
+      print('Running roundtrip ...', flush=True)
       result.update(_run_roundtrip(
           name, filepath, roundtrip_filepath, uhdm_src_filepath,
           roundtrip_log_filepath, roundtrip_output_dirpath))
@@ -627,9 +638,16 @@ def _run_one(params):
       else:
         result['STATUS'] = Status.DIFF
 
-    print('Restoring pristine state ...')
+    print('Restoring pristine state ...', flush=True)
     current_snapshot = _snapshot_directory_state(dirpath)
     print(f'Found {len(current_snapshot)} files & directories')
+
+#     if 'GITHUB_JOB' in os.environ:
+#       # Go ahead and delete these files. CI build tends to run out of disk space.
+#       for filepath in [uhdm_slpp_all_filepath, uhdm_slpp_unit_filepath, uhdm_dump_log_filepath]:
+#         if os.path.isfile(filepath):
+#           print(f'Deleting: {filepath}, {os.path.getsize(filepath)}')
+#           os.remove(filepath)
 
     _restore_directory_state(
       dirpath, golden_snapshot,
@@ -645,6 +663,10 @@ def _run_one(params):
     print(f'end-time: {str(end_dt)} {str(delta)}')
 
     regression_log_strm.flush()
+
+  if _is_ci_build():
+    _generate_tarball(output_dirpath)
+    _rmdir(output_dirpath)
 
   log(f'... {name} Completed.')
   return result
@@ -745,24 +767,13 @@ def _update_one(params):
 
       shutil.copy(surelog_log_filepath, golden_log_filepath)
 
-      # lines = []
-      # with open(surelog_log_filepath, 'rt', encoding='cp850') as istrm:
-      #   for line in istrm:
-      #     line = line.rstrip('\n')
-      #     line = line.replace('/regression/', '/tests/')
-      #     lines.append(line)
-      #   istrm.close()
-      #
-      # while not lines[-1]:
-      #   lines = lines[:-1]
-      # lines.append('')
-      #
-      # with open(golden_log_filepath, 'wt', encoding='cp850') as ostrm:
-      #   for line in lines:
-      #     ostrm.write(line)
-      #     ostrm.write('\n')
-      #   ostrm.flush()
-      #   ostrm.close()
+      # On Windows, fixup the line endings
+      if platform.system() == 'Windows':
+        with open(golden_log_filepath, 'rt', encoding='cp850') as istrm:
+          lines = istrm.readlines()
+        with open(golden_log_filepath, 'wt', encoding='cp850') as ostrm:
+          ostrm.writelines(lines)
+          ostrm.flush()
     except:
       print(f'Failed to overwrite \"{golden_log_filepath}\" with \"{surelog_log_filepath}\"')
       traceback.print_exc()
@@ -796,7 +807,7 @@ def _print_report(results):
       _get_cell_value(columns[4]),
       _get_cell_value(columns[5]),
       _get_cell_value(columns[6]),
-      str(round(result.get(columns[7], 0), 2)),
+      '{:.2f}'.format(result.get(columns[7], 0)),
       str(round(result.get(columns[8], 0) / (1024 * 1024))),
       str(round(result.get(columns[9], 0) / (1024 * 1024))),
       '{}/{}'.format(_get_cell_value("ROUNDTRIP_A"), _get_cell_value("ROUNDTRIP_B")),
@@ -870,7 +881,7 @@ def _run(args, tests):
     os.path.join(args.output_dirpath, name)
   ) for name, filepath in tests.items()]
 
-  if args.jobs == 0:
+  if args.jobs <= 1:
     results = [_run_one(param) for param in params]
   else:
     with multiprocessing.Pool(processes=args.jobs) as pool:
@@ -982,8 +993,8 @@ def _main():
   parser.add_argument(
       '--tool', dest='tool', choices=['ddd', 'valgrind'], required=False, default=None, type=str,
       help='Run regression test using specified tool.')
-  parser.add_argument('--mt', dest='mt', default=0, type=int, help='Enable multithreading mode')
-  parser.add_argument('--mp', dest='mp', default=0, type=int, help='Enable multiprocessing mode')
+  parser.add_argument('--mt', dest='mt', default=None, type=str, help='Enable multithreading mode')
+  parser.add_argument('--mp', dest='mp', default=None, type=str, help='Enable multiprocessing mode')
 
   args = parser.parse_args()
 
@@ -1020,6 +1031,9 @@ def _main():
 
   args.filters = [text if text.isalnum() else re.compile(text, re.IGNORECASE) for text in args.filters]
   all_tests, filtered_tests, blacklisted_tests = _scan(args.test_dirpaths, args.filters)
+
+  if args.jobs > len(filtered_tests):
+    args.jobs = len(filtered_tests)
 
   print( 'Environment:')
   print(f'      command-line: {" ".join(sys.argv)}')

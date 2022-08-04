@@ -34,6 +34,7 @@
 #include <Surelog/DesignCompile/CompileModule.h>
 #include <Surelog/DesignCompile/DesignElaboration.h>
 #include <Surelog/DesignCompile/NetlistElaboration.h>
+#include <Surelog/DesignCompile/UhdmWriter.h>
 #include <Surelog/Library/Library.h>
 #include <Surelog/Package/Package.h>
 #include <Surelog/SourceCompile/Compiler.h>
@@ -85,98 +86,11 @@ bool DesignElaboration::elaborate() {
   elaborateAllModules_(true);
   elaborateAllModules_(false);
   reduceUnnamedBlocks_();
+  bindTypedefsPostElab_();
   checkElaboration_();
   reportElaboration_();
   createFileList_();
   return true;
-}
-
-std::string builtinGateName(VObjectType gatetype) {
-  std::string modName;
-  switch (gatetype) {
-    case VObjectType::slNInpGate_And:
-      modName = "work@and";
-      break;
-    case VObjectType::slNInpGate_Or:
-      modName = "work@or";
-      break;
-    case VObjectType::slNInpGate_Nand:
-      modName = "work@nand";
-      break;
-    case VObjectType::slNInpGate_Nor:
-      modName = "work@nor";
-      break;
-    case VObjectType::slNInpGate_Xor:
-      modName = "work@xor";
-      break;
-    case VObjectType::slNInpGate_Xnor:
-      modName = "work@xnor";
-      break;
-    case VObjectType::slNOutGate_Buf:
-      modName = "work@buf";
-      break;
-    case VObjectType::slNOutGate_Not:
-      modName = "work@not";
-      break;
-    case VObjectType::slPassEnSwitch_Tranif0:
-      modName = "work@tranif0";
-      break;
-    case VObjectType::slPassEnSwitch_Tranif1:
-      modName = "work@tranif1";
-      break;
-    case VObjectType::slPassEnSwitch_RTranif1:
-      modName = "work@rtranif1";
-      break;
-    case VObjectType::slPassEnSwitch_RTranif0:
-      modName = "work@rtranif0";
-      break;
-    case VObjectType::slPassSwitch_Tran:
-      modName = "work@tran";
-      break;
-    case VObjectType::slPassSwitch_RTran:
-      modName = "work@rtran";
-      break;
-    case VObjectType::slCmosSwitchType_Cmos:
-      modName = "work@cmos";
-      break;
-    case VObjectType::slCmosSwitchType_RCmos:
-      modName = "work@rcmos";
-      break;
-    case VObjectType::slEnableGateType_Bufif0:
-      modName = "work@bufif0";
-      break;
-    case VObjectType::slEnableGateType_Bufif1:
-      modName = "work@bufif1";
-      break;
-    case VObjectType::slEnableGateType_Notif0:
-      modName = "work@notif0";
-      break;
-    case VObjectType::slEnableGateType_Notif1:
-      modName = "work@notif1";
-      break;
-    case VObjectType::slMosSwitchType_NMos:
-      modName = "work@nmos";
-      break;
-    case VObjectType::slMosSwitchType_PMos:
-      modName = "work@pmos";
-      break;
-    case VObjectType::slMosSwitchType_RNMos:
-      modName = "work@rnmos";
-      break;
-    case VObjectType::slMosSwitchType_RPMos:
-      modName = "work@rpmos";
-      break;
-    case VObjectType::slPullup:
-      modName = "work@pullup";
-      break;
-    case VObjectType::slPulldown:
-      modName = "work@pulldown";
-      break;
-    default:
-      modName = "work@UnsupportedPrimitive";
-      break;
-  }
-  return modName;
 }
 
 bool DesignElaboration::setupConfigurations_() {
@@ -764,6 +678,52 @@ void DesignElaboration::elaborateInstance_(
     std::vector<ModuleInstance*>& parentSubInstances) {
   if (!parent) return;
 
+  CommandLineParser* clp =
+      m_compileDesign->getCompiler()->getCommandLineParser();
+  std::set<std::string>& blackboxModules = clp->getBlackBoxModules();
+  std::string modName;
+  if (DesignComponent* def = parent->getDefinition()) {
+    modName = def->getName();
+  }
+  if (blackboxModules.find(modName) != blackboxModules.end()) {
+    SymbolTable* st =
+        m_compileDesign->getCompiler()->getErrorContainer()->getSymbolTable();
+    Location loc(st->registerSymbol(fC->getFileName().string()),
+                 fC->Line(nodeId), fC->Column(nodeId),
+                 st->registerSymbol(modName));
+    Error err(ErrorDefinition::ELAB_SKIPPING_BLACKBOX_MODULE, loc);
+    m_compileDesign->getCompiler()->getErrorContainer()->addError(err, false,
+                                                                  false);
+    return;
+  }
+  std::set<std::string>& blackboxInstances = clp->getBlackBoxInstances();
+  std::string instanceName;
+  if (parent) {
+    instanceName = parent->getFullPathName();
+  }
+  if (blackboxInstances.find(modName) != blackboxInstances.end()) {
+    SymbolTable* st =
+        m_compileDesign->getCompiler()->getErrorContainer()->getSymbolTable();
+    Location loc(st->registerSymbol(fC->getFileName().string()),
+                 fC->Line(nodeId), fC->Column(nodeId),
+                 st->registerSymbol(modName));
+    Error err(ErrorDefinition::ELAB_SKIPPING_BLACKBOX_INSTANCE, loc);
+    m_compileDesign->getCompiler()->getErrorContainer()->addError(err, false,
+                                                                  false);
+    return;
+  }
+  if (blackboxInstances.find(instanceName) != blackboxInstances.end()) {
+    SymbolTable* st =
+        m_compileDesign->getCompiler()->getErrorContainer()->getSymbolTable();
+    Location loc(st->registerSymbol(fC->getFileName().string()),
+                 fC->Line(nodeId), fC->Column(nodeId),
+                 st->registerSymbol(instanceName));
+    Error err(ErrorDefinition::ELAB_SKIPPING_BLACKBOX_INSTANCE, loc);
+    m_compileDesign->getCompiler()->getErrorContainer()->addError(err, false,
+                                                                  false);
+    return;
+  }
+
   std::vector<ModuleInstance*>& allSubInstances = parent->getAllSubInstances();
   std::string genBlkBaseName = "genblk";
   unsigned int genBlkIndex = 1;
@@ -841,9 +801,6 @@ void DesignElaboration::elaborateInstance_(
     }
   }
   bindDataTypes_(parent, parent->getDefinition());
-  NetlistElaboration* nelab = new NetlistElaboration(m_compileDesign);
-  nelab->elaborateInstance(parent);
-  delete nelab;
 
   // Scan for regular instances and generate blocks
   VObjectTypeUnorderedSet types = {
@@ -857,7 +814,8 @@ void DesignElaboration::elaborateInstance_(
       VObjectType::slLoop_generate_construct,
       VObjectType::slGenerate_module_loop_statement,
       VObjectType::slGenerate_interface_loop_statement,
-      VObjectType::slPar_block, VObjectType::slSeq_block};
+      VObjectType::slPar_block, VObjectType::slSeq_block,
+      VObjectType::slGenerate_region};
 
   VObjectTypeUnorderedSet stopPoints = {
       VObjectType::slConditional_generate_construct,
@@ -869,267 +827,385 @@ void DesignElaboration::elaborateInstance_(
       VObjectType::slPar_block,
       VObjectType::slSeq_block,
       VObjectType::slModule_declaration,
-      VObjectType::slBind_directive};
+      VObjectType::slBind_directive,
+      VObjectType::slGenerate_region};
 
   std::vector<NodeId> subInstances =
       fC->sl_collect_all(nodeId, types, stopPoints);
-
+  bool elaborated = false;
   for (auto subInstanceId : subInstances) {
-    NodeId childId;
-    std::string instName;
-    std::string modName;
-    DesignComponent* def = nullptr;
-    ModuleInstance* child = nullptr;
-    NodeId paramOverride;
-    Config* subConfig = config;
     VObjectType type = fC->Type(subInstanceId);
-
-    if (type == slSeq_block || type == slPar_block) {
-      NodeId identifierId = fC->Child(subInstanceId);
-      if (fC->Name(identifierId))
-        instName = fC->SymName(identifierId);
-      else
-        instName = "UNNAMED";
-    } else if (type == slConditional_generate_construct) {
-      NodeId constructId = fC->Child(subInstanceId);
-      NodeId condId = fC->Child(constructId);
-      NodeId blockId = fC->Sibling(condId);
-      NodeId nameId = fC->Child(blockId);
-      if (fC->Name(nameId))
+    std::vector<NodeId> subSubInstances;
+    std::string instName;
+    if (type == slGenerate_region) {
+      NodeId Generate_block = fC->Child(subInstanceId);
+      if (fC->Type(Generate_block) != slGenerate_block) {
+        continue;
+      }
+      NodeId nameId = fC->Child(Generate_block);
+      if (fC->Name(nameId)) {
         instName = fC->SymName(nameId);
-      else
-        instName = "UNNAMED";
-    } else {
-      NodeId instId = fC->sl_collect(subInstanceId, slName_of_instance);
-      NodeId identifierId;
-      if (instId) {
-        identifierId = fC->Child(instId);
-        instName = fC->SymName(identifierId);
-      }
-    }
-
-    // Special module binding for built-in primitives
-    if (type == VObjectType::slGate_instantiation) {
-      VObjectType gatetype = fC->Type(fC->Child(subInstanceId));
-      modName = builtinGateName(gatetype);
-      def = design->getComponentDefinition(modName);
-      child = factory->newModuleInstance(def, fC, subInstanceId, parent,
-                                         instName, modName);
-      parent->addSubInstance(child);
-      bindDataTypes_(parent, def);
-      NetlistElaboration* nelab = new NetlistElaboration(m_compileDesign);
-      nelab->elaborateInstance(child);
-      delete nelab;
-    }
-    // Special module binding for generate statements
-    else if (type == VObjectType::slConditional_generate_construct ||
-             type == VObjectType::slGenerate_module_conditional_statement ||
-             type == VObjectType::slGenerate_interface_conditional_statement ||
-             type == VObjectType::slLoop_generate_construct ||
-             type == VObjectType::slGenerate_module_loop_statement ||
-             type == VObjectType::slGenerate_interface_loop_statement) {
-      modName = genBlkBaseName + std::to_string(genBlkIndex);
-      std::string append = "0";
-      while (parent->getValue(modName, m_exprBuilder)) {
-        modName = genBlkBaseName + append + std::to_string(genBlkIndex);
-        append += "0";
-      }
-      VObjectTypeUnorderedSet btypes = {
-          VObjectType::slGenerate_module_block,
-          VObjectType::slGenerate_interface_block,
-          VObjectType::slGenerate_block,
-          VObjectType::slGenerate_module_named_block,
-          VObjectType::slGenerate_interface_named_block};
-
-      std::vector<NodeId> blockIds =
-          fC->sl_collect_all(subInstanceId, btypes, true);
-      if (!blockIds.empty()) {
-        NodeId blockId = blockIds[0];
-        NodeId blockNameId = fC->Child(blockId);
-        if (fC->Type(blockNameId) == VObjectType::slStringConst) {
-          modName = fC->SymName(blockNameId);
-        }
-      }
-      genBlkIndex++;
-      instName = modName;
-      std::string fullName;
-      std::string libName = fC->getLibrary()->getName();
-      if (instName == parent->getInstanceName()) {
-        fullName += parent->getFullPathName();
-        reuseInstance = true;
+        subSubInstances.push_back(subInstanceId);
       } else {
-        fullName += parent->getModuleName() + "." + instName;
-      }
-
-      NodeId conditionId = fC->Child(subInstanceId);
-      if (fC->Type(conditionId) == slIf_generate_construct) {
-        NodeId IF = fC->Child(conditionId);
-        conditionId = fC->Sibling(IF);
-      }
-      VObjectType conditionType = fC->Type(conditionId);
-      if (conditionType == VObjectType::slGenvar_initialization ||
-          conditionType ==
-              VObjectType::slGenvar_decl_assignment) {  // For loop stmt
-
-        // Var init
-        NodeId varId = fC->Child(conditionId);
-        NodeId constExpr = fC->Sibling(varId);
-
-        bool validValue;
-        m_helper.checkForLoops(true);
-        uint64_t initVal = (uint64_t)m_helper.getValue(
-            validValue, parentDef, fC, constExpr, m_compileDesign, nullptr,
-            parent, true, false);
-        m_helper.checkForLoops(false);
-        Value* initValue = m_exprBuilder.getValueFactory().newLValue();
-        initValue->set(initVal);
-
-        std::string name = fC->SymName(varId);
-        parent->setValue(name, initValue, m_exprBuilder, fC->Line(varId));
-
-        // End-loop test
-        NodeId endLoopTest = fC->Sibling(conditionId);
-
-        // Iteration
-        NodeId iteration = fC->Sibling(endLoopTest);
-        NodeId var = fC->Child(iteration);
-        NodeId assignOp = fC->Sibling(var);
-        NodeId expr = fC->Sibling(assignOp);
-        if (!expr) {  // Unary operator like i++
-          expr = var;
-        } else if (fC->Type(assignOp) !=
-                   slAssignOp_Assign) {  // Operators like +=
-          expr = var;
-        }
-        // Generate block
-        NodeId genBlock = fC->Sibling(iteration);
-        m_helper.checkForLoops(true);
-        int64_t condVal =
-            m_helper.getValue(validValue, parentDef, fC, endLoopTest,
-                              m_compileDesign, nullptr, parent, true, false);
-        m_helper.checkForLoops(false);
-        bool cont = (validValue && (condVal > 0));
-
-        while (cont) {
-          Value* currentIndexValue = parent->getValue(name, m_exprBuilder);
-          long currVal = currentIndexValue->getValueUL();
-          std::string indexedModName = parent->getFullPathName() + "." +
-                                       modName + "[" + std::to_string(currVal) +
-                                       "]";
-          instName = modName + "[" + std::to_string(currVal) + "]";
-
-          def = design->getComponentDefinition(indexedModName);
-          if (def == nullptr) {
-            def = m_moduleDefFactory->newModuleDefinition(fC, subInstanceId,
-                                                          indexedModName);
-            if (DesignComponent* defParent = parent->getDefinition())
-              def->setParentScope(defParent);
-            design->addModuleDefinition(indexedModName, (ModuleDefinition*)def);
+        while (Generate_block) {
+          std::vector<NodeId> subIds =
+              fC->sl_collect_all(Generate_block, types, stopPoints);
+          if (!subIds.empty()) {
+            for (auto id : subIds) {
+              subSubInstances.push_back(id);
+            }
+          } else {
+            if (DesignComponent* def = parent->getDefinition()) {
+              // Compile generate block
+              ((ModuleDefinition*)def)->setGenBlockId(Generate_block);
+              FunctorCompileModule funct(
+                  m_compileDesign, (ModuleDefinition*)def, design,
+                  m_compileDesign->getCompiler()->getSymbolTable(),
+                  m_compileDesign->getCompiler()->getErrorContainer(), parent);
+              funct.operator()();
+            }
           }
+          Generate_block = fC->Sibling(Generate_block);
+          if (Generate_block && (fC->Type(Generate_block) == slEndgenerate)) {
+            break;
+          }
+        }
+      }
+    } else {
+      subSubInstances.push_back(subInstanceId);
+    }
+    elaborated = true;
+    NetlistElaboration* nelab = new NetlistElaboration(m_compileDesign);
+    nelab->elaborateInstance(parent);
+    delete nelab;
 
-          // Compile generate block
-          ((ModuleDefinition*)def)->setGenBlockId(genBlock);
-          FunctorCompileModule funct(
-              m_compileDesign, (ModuleDefinition*)def, design,
-              m_compileDesign->getCompiler()->getSymbolTable(),
-              m_compileDesign->getCompiler()->getErrorContainer(), parent);
-          funct.operator()();
+    for (auto subInstanceId : subSubInstances) {
+      NodeId childId;
+      std::string modName;
+      DesignComponent* def = nullptr;
+      ModuleInstance* child = nullptr;
+      NodeId paramOverride;
+      Config* subConfig = config;
+      VObjectType type = fC->Type(subInstanceId);
 
-          child = factory->newModuleInstance(def, fC, genBlock, parent,
-                                             instName, indexedModName);
-          child->setValue(name, m_exprBuilder.clone(currentIndexValue),
-                          m_exprBuilder, fC->Line(varId));
-          elaborateInstance_(def->getFileContents()[0], genBlock, InvalidNodeId,
-                             factory, child, config, allSubInstances);
-          parent->addSubInstance(child);
+      if (type == slSeq_block || type == slPar_block) {
+        NodeId identifierId = fC->Child(subInstanceId);
+        if (fC->Name(identifierId))
+          instName = fC->SymName(identifierId);
+        else
+          instName = "UNNAMED";
+      } else if (type == slConditional_generate_construct) {
+        NodeId constructId = fC->Child(subInstanceId);
+        NodeId condId = fC->Child(constructId);
+        NodeId blockId = fC->Sibling(condId);
+        NodeId nameId = fC->Child(blockId);
+        if (fC->Name(nameId))
+          instName = fC->SymName(nameId);
+        else
+          instName = "UNNAMED";
+      } else {
+        NodeId instId = fC->sl_collect(subInstanceId, slName_of_instance);
+        NodeId identifierId;
+        if (instId) {
+          identifierId = fC->Child(instId);
+          instName = fC->SymName(identifierId);
+        }
+      }
 
-          Value* newVal = m_exprBuilder.evalExpr(fC, expr, parent);
-          parent->setValue(name, newVal, m_exprBuilder, fC->Line(varId));
+      // Special module binding for built-in primitives
+      if (type == VObjectType::slGate_instantiation) {
+        VObjectType gatetype = fC->Type(fC->Child(subInstanceId));
+        modName = UhdmWriter::builtinGateName(gatetype);
+        def = design->getComponentDefinition(modName);
+        child = factory->newModuleInstance(def, fC, subInstanceId, parent,
+                                           instName, modName);
+        parent->addSubInstance(child);
+        bindDataTypes_(parent, def);
+        NetlistElaboration* nelab = new NetlistElaboration(m_compileDesign);
+        nelab->elaborateInstance(child);
+        delete nelab;
+      }
+      // Special module binding for generate statements
+      else if (type == VObjectType::slConditional_generate_construct ||
+               type == VObjectType::slGenerate_module_conditional_statement ||
+               type ==
+                   VObjectType::slGenerate_interface_conditional_statement ||
+               type == VObjectType::slLoop_generate_construct ||
+               type == VObjectType::slGenerate_module_loop_statement ||
+               type == VObjectType::slGenerate_interface_loop_statement) {
+        modName = genBlkBaseName + std::to_string(genBlkIndex);
+        std::string append = "0";
+        while (parent->getValue(modName, m_exprBuilder)) {
+          modName = genBlkBaseName + append + std::to_string(genBlkIndex);
+          append += "0";
+        }
+        VObjectTypeUnorderedSet btypes = {
+            VObjectType::slGenerate_module_block,
+            VObjectType::slGenerate_interface_block,
+            VObjectType::slGenerate_block,
+            VObjectType::slGenerate_module_named_block,
+            VObjectType::slGenerate_interface_named_block};
+
+        std::vector<NodeId> blockIds =
+            fC->sl_collect_all(subInstanceId, btypes, true);
+        if (!blockIds.empty()) {
+          NodeId blockId = blockIds[0];
+          NodeId blockNameId = fC->Child(blockId);
+          if (fC->Type(blockNameId) == VObjectType::slStringConst) {
+            modName = fC->SymName(blockNameId);
+          }
+        }
+        genBlkIndex++;
+        instName = modName;
+        std::string fullName;
+        std::string libName = fC->getLibrary()->getName();
+        if (instName == parent->getInstanceName()) {
+          fullName += parent->getFullPathName();
+          reuseInstance = true;
+        } else {
+          fullName += parent->getModuleName() + "." + instName;
+        }
+
+        NodeId conditionId = fC->Child(subInstanceId);
+        if (fC->Type(conditionId) == slIf_generate_construct) {
+          NodeId IF = fC->Child(conditionId);
+          conditionId = fC->Sibling(IF);
+        }
+        VObjectType conditionType = fC->Type(conditionId);
+        if (conditionType == VObjectType::slGenvar_initialization ||
+            conditionType ==
+                VObjectType::slGenvar_decl_assignment) {  // For loop stmt
+
+          // Var init
+          NodeId varId = fC->Child(conditionId);
+          NodeId constExpr = fC->Sibling(varId);
+
+          bool validValue;
           m_helper.checkForLoops(true);
-          condVal =
+          uint64_t initVal = (uint64_t)m_helper.getValue(
+              validValue, parentDef, fC, constExpr, m_compileDesign, nullptr,
+              parent, true, false);
+          m_helper.checkForLoops(false);
+          Value* initValue = m_exprBuilder.getValueFactory().newLValue();
+          initValue->set(initVal);
+
+          std::string name = fC->SymName(varId);
+          parent->setValue(name, initValue, m_exprBuilder, fC->Line(varId));
+
+          // End-loop test
+          NodeId endLoopTest = fC->Sibling(conditionId);
+
+          // Iteration
+          NodeId iteration = fC->Sibling(endLoopTest);
+          NodeId var = fC->Child(iteration);
+          NodeId assignOp = fC->Sibling(var);
+          NodeId expr = fC->Sibling(assignOp);
+          if (!expr) {  // Unary operator like i++
+            expr = var;
+          } else if (fC->Type(assignOp) !=
+                     slAssignOp_Assign) {  // Operators like +=
+            expr = var;
+          }
+          // Generate block
+          NodeId genBlock = fC->Sibling(iteration);
+          m_helper.checkForLoops(true);
+          int64_t condVal =
               m_helper.getValue(validValue, parentDef, fC, endLoopTest,
                                 m_compileDesign, nullptr, parent, true, false);
           m_helper.checkForLoops(false);
-          cont = (validValue && (condVal > 0));
+          bool cont = (validValue && (condVal > 0));
 
-          if (!newVal->isValid()) {
-            cont = false;
+          while (cont) {
+            Value* currentIndexValue = parent->getValue(name, m_exprBuilder);
+            long currVal = currentIndexValue->getValueUL();
+            std::string indexedModName = parent->getFullPathName() + "." +
+                                         modName + "[" +
+                                         std::to_string(currVal) + "]";
+            instName = modName + "[" + std::to_string(currVal) + "]";
+
+            def = design->getComponentDefinition(indexedModName);
+            if (def == nullptr) {
+              def = m_moduleDefFactory->newModuleDefinition(fC, subInstanceId,
+                                                            indexedModName);
+              if (DesignComponent* defParent = parent->getDefinition())
+                def->setParentScope(defParent);
+              design->addModuleDefinition(indexedModName,
+                                          (ModuleDefinition*)def);
+            }
+
+            // Compile generate block
+            ((ModuleDefinition*)def)->setGenBlockId(genBlock);
+            FunctorCompileModule funct(
+                m_compileDesign, (ModuleDefinition*)def, design,
+                m_compileDesign->getCompiler()->getSymbolTable(),
+                m_compileDesign->getCompiler()->getErrorContainer(), parent);
+            funct.operator()();
+
+            child = factory->newModuleInstance(def, fC, genBlock, parent,
+                                               instName, indexedModName);
+            child->setValue(name, m_exprBuilder.clone(currentIndexValue),
+                            m_exprBuilder, fC->Line(varId));
+            elaborateInstance_(def->getFileContents()[0], genBlock,
+                               InvalidNodeId, factory, child, config,
+                               allSubInstances);
+            parent->addSubInstance(child);
+
+            Value* newVal = m_exprBuilder.evalExpr(fC, expr, parent);
+            parent->setValue(name, newVal, m_exprBuilder, fC->Line(varId));
+            m_helper.checkForLoops(true);
+            condVal = m_helper.getValue(validValue, parentDef, fC, endLoopTest,
+                                        m_compileDesign, nullptr, parent, true,
+                                        false);
+            m_helper.checkForLoops(false);
+            cont = (validValue && (condVal > 0));
+
+            if (!newVal->isValid()) {
+              cont = false;
+            }
           }
-        }
-        parent->deleteValue(name, m_exprBuilder);
-        continue;
+          parent->deleteValue(name, m_exprBuilder);
+          continue;
 
-      } else {  // If-Else or Case stmt
-        if (fC->Type(conditionId) != VObjectType::slConstant_expression) {
-          conditionId = fC->Child(conditionId);
-        }
-        bool validValue;
-        m_helper.checkForLoops(true);
-        int64_t condVal =
-            m_helper.getValue(validValue, parentDef, fC, conditionId,
-                              m_compileDesign, nullptr, parent, true, false);
-        m_helper.checkForLoops(false);
-        NodeId tmp = fC->Sibling(conditionId);
+        } else {  // If-Else or Case stmt
+          if (fC->Type(conditionId) != VObjectType::slConstant_expression) {
+            conditionId = fC->Child(conditionId);
+          }
+          bool validValue;
+          m_helper.checkForLoops(true);
+          int64_t condVal =
+              m_helper.getValue(validValue, parentDef, fC, conditionId,
+                                m_compileDesign, nullptr, parent, true, false);
+          m_helper.checkForLoops(false);
+          NodeId tmp = fC->Sibling(conditionId);
 
-        if (fC->Type(tmp) == VObjectType::slCase_generate_item) {  // Case stmt
-          NodeId caseItem = tmp;
-          bool nomatch = true;
-          while (nomatch) {
-            NodeId exprItem = fC->Child(caseItem);
-            if (fC->Type(exprItem) ==
-                VObjectType::slGenerate_block)  // Default block
-              nomatch = false;
+          if (fC->Type(tmp) ==
+              VObjectType::slCase_generate_item) {  // Case stmt
+            NodeId caseItem = tmp;
+            bool nomatch = true;
             while (nomatch) {
-              // Find if one of the case expr matches the case expr
-              if (fC->Type(exprItem) == VObjectType::slConstant_expression) {
-                bool validValue;
-                m_helper.checkForLoops(true);
-                int64_t caseVal = m_helper.getValue(
-                    validValue, parentDef, fC, exprItem, m_compileDesign,
-                    nullptr, parent, true, false);
-                m_helper.checkForLoops(false);
-                if (condVal == caseVal) {
-                  nomatch = false;
+              NodeId exprItem = fC->Child(caseItem);
+              if (fC->Type(exprItem) ==
+                  VObjectType::slGenerate_block)  // Default block
+                nomatch = false;
+              while (nomatch) {
+                // Find if one of the case expr matches the case expr
+                if (fC->Type(exprItem) == VObjectType::slConstant_expression) {
+                  bool validValue;
+                  m_helper.checkForLoops(true);
+                  int64_t caseVal = m_helper.getValue(
+                      validValue, parentDef, fC, exprItem, m_compileDesign,
+                      nullptr, parent, true, false);
+                  m_helper.checkForLoops(false);
+                  if (condVal == caseVal) {
+                    nomatch = false;
+                    break;
+                  }
+                } else
+                  break;
+                exprItem = fC->Sibling(exprItem);
+              }
+
+              if (nomatch) {
+                // Next case stmt
+                caseItem = fC->Sibling(caseItem);
+                if (!caseItem) break;
+                if (fC->Type(caseItem) != VObjectType::slCase_generate_item)
+                  break;
+              } else {
+                // We found a match
+                while (fC->Type(exprItem) == VObjectType::slConstant_expression)
+                  exprItem = fC->Sibling(exprItem);
+                childId = exprItem;
+              }
+            }
+          } else {              // If-Else stmt
+            if (condVal > 0) {  // If branch
+              if (tmp)
+                childId = tmp;
+              else  // There is no If stmt
+                continue;
+            } else {  // Else branch
+              if (!tmp) continue;
+              bool activeBranch = false;
+              while (1) {
+                if (tmp) {
+                  tmp = fC->Sibling(tmp);  // Else
+                  if (!tmp) break;
+                  tmp = fC->Sibling(tmp);
+                  int64_t condVal = 0;
+
+                  NodeId Generate_block = tmp;
+                  NodeId Generate_item = fC->Child(Generate_block);
+                  NodeId Cond;
+                  if (fC->Type(Generate_item) == slGenerate_item) {
+                    NodeId Module_or_generate_item = fC->Child(Generate_item);
+                    NodeId Module_common_item =
+                        fC->Child(Module_or_generate_item);
+                    NodeId Conditional_generate_construct =
+                        fC->Child(Module_common_item);
+                    NodeId If_generate_construct =
+                        fC->Child(Conditional_generate_construct);
+                    Cond = fC->Child(If_generate_construct);
+                    if (fC->Type(Cond) == VObjectType::slIF) {
+                      Cond = fC->Sibling(Cond);
+                    }
+                    if (fC->Type(Cond) == VObjectType::slConstant_expression) {
+                      bool validValue;
+                      m_helper.checkForLoops(true);
+                      condVal = m_helper.getValue(validValue, parentDef, fC,
+                                                  Cond, m_compileDesign,
+                                                  nullptr, parent, true, false);
+                      m_helper.checkForLoops(false);
+                    } else {
+                      // It is not an else-if
+                      condVal = true;
+                    }
+                  } else if (fC->Type(Generate_item) ==
+                             slGenerate_module_conditional_statement) {
+                    Cond = fC->Child(Generate_item);
+                    if (fC->Type(Cond) == VObjectType::slIF) {
+                      Cond = fC->Sibling(Cond);
+                    }
+                    if (fC->Type(Cond) == VObjectType::slConstant_expression) {
+                      bool validValue;
+                      m_helper.checkForLoops(true);
+                      condVal = m_helper.getValue(validValue, parentDef, fC,
+                                                  Cond, m_compileDesign,
+                                                  nullptr, parent, true, false);
+                      m_helper.checkForLoops(false);
+                    } else {
+                      // It is not an else-if
+                      condVal = true;
+                    }
+
+                  } else {
+                    // It is not an else-if
+                    condVal = true;
+                  }
+
+                  if (condVal > 0) {
+                    activeBranch = true;
+                    childId = tmp;
+                    break;
+                  } else {
+                    // Else branch
+                    tmp = fC->Sibling(Cond);
+                  }
+
+                } else {  // There is no Else stmt
+                  activeBranch = false;
                   break;
                 }
-              } else
-                break;
-              exprItem = fC->Sibling(exprItem);
-            }
+              }
+              if (!activeBranch) continue;
 
-            if (nomatch) {
-              // Next case stmt
-              caseItem = fC->Sibling(caseItem);
-              if (!caseItem) break;
-              if (fC->Type(caseItem) != VObjectType::slCase_generate_item)
-                break;
-            } else {
-              // We found a match
-              while (fC->Type(exprItem) == VObjectType::slConstant_expression)
-                exprItem = fC->Sibling(exprItem);
-              childId = exprItem;
-            }
-          }
-        } else {              // If-Else stmt
-          if (condVal > 0) {  // If branch
-            if (tmp)
-              childId = tmp;
-            else  // There is no If stmt
-              continue;
-          } else {  // Else branch
-            if (!tmp) continue;
-            bool activeBranch = false;
-            while (1) {
-              if (tmp) {
-                tmp = fC->Sibling(tmp);  // Else
-                if (!tmp) break;
-                tmp = fC->Sibling(tmp);
-                int64_t condVal = 0;
-
-                NodeId Generate_block = tmp;
-                NodeId Generate_item = fC->Child(Generate_block);
-                NodeId Cond;
-                if (fC->Type(Generate_item) == slGenerate_item) {
+              // refresh instName
+              NodeId blockNameId = fC->Child(tmp);
+              if (fC->Type(blockNameId) == VObjectType::slStringConst ||
+                  fC->Type(blockNameId) ==
+                      VObjectType::slGenerate_block) {  // if-else
+                if (fC->Type(blockNameId) == VObjectType::slGenerate_block) {
+                  NodeId Generate_item = fC->Child(blockNameId);
                   NodeId Module_or_generate_item = fC->Child(Generate_item);
                   NodeId Module_common_item =
                       fC->Child(Module_or_generate_item);
@@ -1137,287 +1213,202 @@ void DesignElaboration::elaborateInstance_(
                       fC->Child(Module_common_item);
                   NodeId If_generate_construct =
                       fC->Child(Conditional_generate_construct);
-                  Cond = fC->Child(If_generate_construct);
-                  if (fC->Type(Cond) == VObjectType::slIF) {
-                    Cond = fC->Sibling(Cond);
-                  }
-                  if (fC->Type(Cond) == VObjectType::slConstant_expression) {
-                    bool validValue;
-                    m_helper.checkForLoops(true);
-                    condVal = m_helper.getValue(validValue, parentDef, fC, Cond,
-                                                m_compileDesign, nullptr,
-                                                parent, true, false);
-                    m_helper.checkForLoops(false);
-                  } else {
-                    // It is not an else-if
-                    condVal = true;
-                  }
-                } else if (fC->Type(Generate_item) ==
-                           slGenerate_module_conditional_statement) {
-                  Cond = fC->Child(Generate_item);
-                  if (fC->Type(Cond) == VObjectType::slIF) {
-                    Cond = fC->Sibling(Cond);
-                  }
-                  if (fC->Type(Cond) == VObjectType::slConstant_expression) {
-                    bool validValue;
-                    m_helper.checkForLoops(true);
-                    condVal = m_helper.getValue(validValue, parentDef, fC, Cond,
-                                                m_compileDesign, nullptr,
-                                                parent, true, false);
-                    m_helper.checkForLoops(false);
-                  } else {
-                    // It is not an else-if
-                    condVal = true;
-                  }
-
-                } else {
-                  // It is not an else-if
-                  condVal = true;
-                }
-
-                if (condVal > 0) {
-                  activeBranch = true;
-                  childId = tmp;
-                  break;
-                } else {
-                  // Else branch
-                  tmp = fC->Sibling(Cond);
-                }
-
-              } else {  // There is no Else stmt
-                activeBranch = false;
-                break;
-              }
-            }
-            if (!activeBranch) continue;
-
-            // refresh instName
-            NodeId blockNameId = fC->Child(tmp);
-            if (fC->Type(blockNameId) == VObjectType::slStringConst ||
-                fC->Type(blockNameId) ==
-                    VObjectType::slGenerate_block) {  // if-else
-              if (fC->Type(blockNameId) == VObjectType::slGenerate_block) {
-                NodeId Generate_item = fC->Child(blockNameId);
-                NodeId Module_or_generate_item = fC->Child(Generate_item);
-                NodeId Module_common_item = fC->Child(Module_or_generate_item);
-                NodeId Conditional_generate_construct =
-                    fC->Child(Module_common_item);
-                NodeId If_generate_construct =
-                    fC->Child(Conditional_generate_construct);
-                if (fC->Type(If_generate_construct) ==
-                    slIf_generate_construct) {
-                  if (fC->Type(childId) == slGenerate_block)
-                    childId = fC->Child(childId);
-                  blockIds = fC->sl_collect_all(childId, btypes, true);
-                  if (!blockIds.empty()) {
-                    NodeId blockId = blockIds[0];
-                    NodeId blockNameId = fC->Child(blockId);
-                    if (fC->Type(blockNameId) == VObjectType::slStringConst) {
-                      modName = fC->SymName(blockNameId);
-                      subInstanceId = fC->Sibling(blockNameId);
-                      childId = subInstanceId;
-                    } else {
-                      subInstanceId = childId;
+                  if (fC->Type(If_generate_construct) ==
+                      slIf_generate_construct) {
+                    if (fC->Type(childId) == slGenerate_block)
+                      childId = fC->Child(childId);
+                    blockIds = fC->sl_collect_all(childId, btypes, true);
+                    if (!blockIds.empty()) {
+                      NodeId blockId = blockIds[0];
+                      NodeId blockNameId = fC->Child(blockId);
+                      if (fC->Type(blockNameId) == VObjectType::slStringConst) {
+                        modName = fC->SymName(blockNameId);
+                        subInstanceId = fC->Sibling(blockNameId);
+                        childId = subInstanceId;
+                      } else {
+                        subInstanceId = childId;
+                      }
                     }
+                  } else {
+                    subInstanceId = tmp;
+                    childId = subInstanceId;
                   }
                 } else {
+                  modName = fC->SymName(blockNameId);
                   subInstanceId = tmp;
                   childId = subInstanceId;
                 }
-              } else {
-                modName = fC->SymName(blockNameId);
-                subInstanceId = tmp;
-                childId = subInstanceId;
-              }
 
-            } else {  // if-else-if
-              blockIds = fC->sl_collect_all(childId, btypes, true);
-              if (!blockIds.empty()) {
-                NodeId blockId = blockIds[0];
-                NodeId blockNameId = fC->Child(blockId);
-                if (fC->Type(blockNameId) == VObjectType::slStringConst) {
-                  modName = fC->SymName(blockNameId);
-                  subInstanceId = fC->Sibling(blockNameId);
-                  childId = subInstanceId;
-                } else {
-                  subInstanceId = childId;
+              } else {  // if-else-if
+                blockIds = fC->sl_collect_all(childId, btypes, true);
+                if (!blockIds.empty()) {
+                  NodeId blockId = blockIds[0];
+                  NodeId blockNameId = fC->Child(blockId);
+                  if (fC->Type(blockNameId) == VObjectType::slStringConst) {
+                    modName = fC->SymName(blockNameId);
+                    subInstanceId = fC->Sibling(blockNameId);
+                    childId = subInstanceId;
+                  } else {
+                    subInstanceId = childId;
+                  }
                 }
               }
+              instName = modName;
             }
-            instName = modName;
           }
         }
-      }
 
-      libName = fC->getLibrary()->getName();
-      // fullName = parent->getModuleName() + "." + instName;
-      // def = design->getComponentDefinition(fullName);
+        libName = fC->getLibrary()->getName();
+        // fullName = parent->getModuleName() + "." + instName;
+        // def = design->getComponentDefinition(fullName);
 
-      std::string indexedModName = parent->getFullPathName() + "." + modName;
-      def = design->getComponentDefinition(indexedModName);
-      if (def == nullptr) {
-        def = m_moduleDefFactory->newModuleDefinition(fC, subInstanceId,
-                                                      indexedModName);
-        if (DesignComponent* defParent = parent->getDefinition())
-          def->setParentScope(defParent);
-        design->addModuleDefinition(indexedModName, (ModuleDefinition*)def);
-      }
-
-      // std::cout << "Inst:" << fullName << ", modName:" << modName <<
-      // std::endl; for (auto param : parent->getMappedValues()) {
-      //  std::cout << param.first << " " << param.second.first->uhdmValue() <<
-      //  std::endl;
-      //}
-
-      // Compile generate block
-      ((ModuleDefinition*)def)->setGenBlockId(childId);
-      FunctorCompileModule funct(
-          m_compileDesign, (ModuleDefinition*)def, design,
-          m_compileDesign->getCompiler()->getSymbolTable(),
-          m_compileDesign->getCompiler()->getErrorContainer(), parent);
-      funct.operator()();
-
-      child = factory->newModuleInstance(def, fC, subInstanceId, parent,
-                                         instName, indexedModName);
-      while (childId) {
-        elaborateInstance_(def->getFileContents()[0], childId, paramOverride,
-                           factory, child, config, allSubInstances);
-        childId = fC->Sibling(childId);
-        if (fC->Type(childId) == slGenerate_block) {
-          NodeId subChild = fC->Child(childId);
-          if (fC->Type(subChild) == slGenerate_block) {
-            break;
-          }
+        std::string indexedModName = parent->getFullPathName() + "." + modName;
+        def = design->getComponentDefinition(indexedModName);
+        if (def == nullptr) {
+          def = m_moduleDefFactory->newModuleDefinition(fC, subInstanceId,
+                                                        indexedModName);
+          if (DesignComponent* defParent = parent->getDefinition())
+            def->setParentScope(defParent);
+          design->addModuleDefinition(indexedModName, (ModuleDefinition*)def);
         }
-        if (fC->Type(childId) == slGenerate_module_item) {
-          NodeId node = fC->Child(childId);
-          if (fC->Type(node) == slGenerate_module_conditional_statement) {
-            break;
+
+        // std::cout << "Inst:" << fullName << ", modName:" << modName <<
+        // std::endl; for (auto param : parent->getMappedValues()) {
+        //  std::cout << param.first << " " << param.second.first->uhdmValue()
+        //  << std::endl;
+        //}
+
+        // Compile generate block
+        ((ModuleDefinition*)def)->setGenBlockId(childId);
+        FunctorCompileModule funct(
+            m_compileDesign, (ModuleDefinition*)def, design,
+            m_compileDesign->getCompiler()->getSymbolTable(),
+            m_compileDesign->getCompiler()->getErrorContainer(), parent);
+        funct.operator()();
+
+        child = factory->newModuleInstance(def, fC, subInstanceId, parent,
+                                           instName, indexedModName);
+        while (childId) {
+          elaborateInstance_(def->getFileContents()[0], childId, paramOverride,
+                             factory, child, config, allSubInstances);
+          childId = fC->Sibling(childId);
+          if (fC->Type(childId) == slGenerate_block) {
+            NodeId subChild = fC->Child(childId);
+            if (fC->Type(subChild) == slGenerate_block) {
+              break;
+            }
           }
-          if (fC->Type(node) == slGenerate_module_block) {
-            break;
+          if (fC->Type(childId) == slGenerate_module_item) {
+            NodeId node = fC->Child(childId);
+            if (fC->Type(node) == slGenerate_module_conditional_statement) {
+              break;
+            }
+            if (fC->Type(node) == slGenerate_module_block) {
+              break;
+            }
           }
+          if (fC->Type(childId) == slElse) break;
+          if (fC->Type(childId) == slEnd) break;
         }
-        if (fC->Type(childId) == slElse) break;
-        if (fC->Type(childId) == slEnd) break;
+        parent->addSubInstance(child);
       }
-      parent->addSubInstance(child);
-    }
-    // Named blocks
-    else if (type == slSeq_block || type == slPar_block) {
-      std::string libName = fC->getLibrary()->getName();
-      std::string fullName = parent->getModuleName() + "." + instName;
+      // Named blocks
+      else if (type == slSeq_block || type == slPar_block) {
+        std::string libName = fC->getLibrary()->getName();
+        std::string fullName = parent->getModuleName() + "." + instName;
 
-      def = design->getComponentDefinition(fullName);
-      if (def == nullptr) {
-        def = m_moduleDefFactory->newModuleDefinition(fC, subInstanceId,
-                                                      fullName);
-        design->addModuleDefinition(fullName, (ModuleDefinition*)def);
-      }
-
-      ModuleInstance* child = factory->newModuleInstance(
-          def, fC, subInstanceId, parent, instName, modName);
-      elaborateInstance_(def->getFileContents()[0], subInstanceId,
-                         paramOverride, factory, child, config,
-                         allSubInstances);
-      parent->addSubInstance(child);
-
-    }
-    // Regular module binding
-    else {
-      NodeId moduleName =
-          fC->sl_collect(subInstanceId, VObjectType::slStringConst);
-      std::string libName = fC->getLibrary()->getName();
-      mname = fC->SymName(moduleName);
-
-      std::vector<std::string> libs;
-      if (config) {
-        for (const auto& lib : config->getDefaultLibs()) {
-          libs.push_back(lib);
+        def = design->getComponentDefinition(fullName);
+        if (def == nullptr) {
+          def = m_moduleDefFactory->newModuleDefinition(fC, subInstanceId,
+                                                        fullName);
+          design->addModuleDefinition(fullName, (ModuleDefinition*)def);
         }
-        libs.push_back(libName);
-      } else {
-        libs.push_back(libName);
-      }
 
-      for (const auto& lib : libs) {
-        modName = lib + "@" + mname;
-        def = design->getComponentDefinition(modName);
-        if (def) {
-          break;
+        ModuleInstance* child = factory->newModuleInstance(
+            def, fC, subInstanceId, parent, instName, modName);
+        elaborateInstance_(def->getFileContents()[0], subInstanceId,
+                           paramOverride, factory, child, config,
+                           allSubInstances);
+        parent->addSubInstance(child);
+
+      } else if (type == slGenerate_region) {
+        NodeId Generate_block = fC->Child(subInstanceId);
+        if (fC->Type(Generate_block) != slGenerate_block) {
+          continue;
+        }
+        NodeId nameId = fC->Child(Generate_block);
+        if (fC->Name(nameId)) {
+          instName = fC->SymName(nameId);
+        }
+
+        std::string libName = fC->getLibrary()->getName();
+        std::string fullName;
+        if (instName.empty())
+          fullName = parent->getModuleName() + "." + genBlkBaseName +
+                     std::to_string(genBlkIndex);
+        else
+          fullName = parent->getModuleName() + "." + instName;
+
+        def = design->getComponentDefinition(fullName);
+        NodeId childId = fC->Child(subInstanceId);
+        if (def == nullptr) {
+          def = m_moduleDefFactory->newModuleDefinition(fC, subInstanceId,
+                                                        fullName);
+          design->addModuleDefinition(fullName, (ModuleDefinition*)def);
+        }
+
+        if (instName.empty()) {
+          instName = genBlkBaseName + std::to_string(genBlkIndex);
         } else {
-          modName = parent->getDefinition()->getName() + "::" + mname;
+          // Compile generate block
+          ((ModuleDefinition*)def)->setGenBlockId(childId);
+          FunctorCompileModule funct(
+              m_compileDesign, (ModuleDefinition*)def, design,
+              m_compileDesign->getCompiler()->getSymbolTable(),
+              m_compileDesign->getCompiler()->getErrorContainer(), parent);
+          funct.operator()();
+        }
+
+        ModuleInstance* child = factory->newModuleInstance(
+            def, fC, subInstanceId, parent, instName, modName);
+        elaborateInstance_(def->getFileContents()[0], subInstanceId,
+                           paramOverride, factory, child, config,
+                           allSubInstances);
+        parent->addSubInstance(child);
+
+      } else {
+        // Regular module binding
+        NodeId moduleName =
+            fC->sl_collect(subInstanceId, VObjectType::slStringConst);
+        std::string libName = fC->getLibrary()->getName();
+        mname = fC->SymName(moduleName);
+
+        std::vector<std::string> libs;
+        if (config) {
+          for (const auto& lib : config->getDefaultLibs()) {
+            libs.push_back(lib);
+          }
+          libs.push_back(libName);
+        } else {
+          libs.push_back(libName);
+        }
+
+        for (const auto& lib : libs) {
+          modName = lib + "@" + mname;
           def = design->getComponentDefinition(modName);
           if (def) {
             break;
-          }
-        }
-      }
-
-      auto itr = m_cellUseClause.find(mname);
-      if (itr != m_cellUseClause.end()) {
-        UseClause& use = (*itr).second;
-        switch (use.getType()) {
-          case UseClause::UseModule: {
-            std::string name = use.getName();
-            def = design->getComponentDefinition(name);
-            if (def) use.setUsed();
-            break;
-          }
-          case UseClause::UseLib: {
-            for (const auto& lib : use.getLibs()) {
-              modName = lib + "@" + mname;
-              def = design->getComponentDefinition(modName);
-              if (def) {
-                use.setUsed();
-                break;
-              }
+          } else {
+            modName = parent->getDefinition()->getName() + "::" + mname;
+            def = design->getComponentDefinition(modName);
+            if (def) {
+              break;
             }
-            break;
           }
-          default:
-            break;
-        }
-      }
-
-      if (def) childId = def->getNodeIds()[0];
-
-      NodeId tmpId = fC->Sibling(moduleName);
-      VObjectType tmpType = fC->Type(tmpId);
-      if (tmpType == VObjectType::slParameter_value_assignment ||
-          tmpType == slDelay2) {
-        paramOverride = tmpId;
-      }
-
-      std::vector<int> from;
-      std::vector<int> to;
-      std::vector<int> index;
-
-      VObjectTypeUnorderedSet insttypes = {
-          VObjectType::slHierarchical_instance,
-          VObjectType::slN_input_gate_instance,
-          VObjectType::slN_output_gate_instance,
-          VObjectType::slPull_gate_instance, VObjectType::slUdp_instance};
-
-      std::vector<NodeId> hierInstIds =
-          fC->sl_collect_all(subInstanceId, insttypes, true);
-
-      NodeId hierInstId;
-      if (!hierInstIds.empty()) hierInstId = hierInstIds[0];
-
-      if (!hierInstId) continue;
-
-      while (hierInstId) {
-        NodeId instId = fC->sl_collect(hierInstId, slName_of_instance);
-        NodeId identifierId;
-        if (instId) {
-          identifierId = fC->Child(instId);
-          instName = fC->SymName(identifierId);
         }
 
-        auto itr =
-            m_instUseClause.find(parent->getFullPathName() + "." + instName);
-        if (itr != m_instUseClause.end()) {
+        auto itr = m_cellUseClause.find(mname);
+        if (itr != m_cellUseClause.end()) {
           UseClause& use = (*itr).second;
           switch (use.getType()) {
             case UseClause::UseModule: {
@@ -1434,21 +1425,6 @@ void DesignElaboration::elaborateInstance_(
                   use.setUsed();
                   break;
                 }
-                break;
-              }
-              break;
-            }
-            case UseClause::UseConfig: {
-              std::string useConfig = use.getName();
-              Config* config =
-                  design->getConfigSet()->getMutableConfigByName(useConfig);
-              if (config) {
-                subConfig = config;
-                std::string lib = config->getDesignLib();
-                std::string top = config->getDesignTop();
-                modName = lib + "@" + top;
-                def = design->getComponentDefinition(modName);
-                if (def) use.setUsed();
               }
               break;
             }
@@ -1457,90 +1433,175 @@ void DesignElaboration::elaborateInstance_(
           }
         }
 
-        if (def)
-          childId = def->getNodeIds()[0];
-        else {
-          SymbolTable* st = m_compileDesign->getCompiler()
-                                ->getErrorContainer()
-                                ->getSymbolTable();
-          Location loc(
-              st->registerSymbol(fC->getFileName(subInstanceId).string()),
-              fC->Line(subInstanceId), fC->Column(subInstanceId),
-              st->registerSymbol(modName));
-          Error err(ErrorDefinition::ELAB_NO_MODULE_DEFINITION, loc);
-          m_compileDesign->getCompiler()->getErrorContainer()->addError(
-              err, false, false);
+        if (def) childId = def->getNodeIds()[0];
+
+        NodeId tmpId = fC->Sibling(moduleName);
+        VObjectType tmpType = fC->Type(tmpId);
+        if (tmpType == VObjectType::slParameter_value_assignment ||
+            tmpType == slDelay2) {
+          paramOverride = tmpId;
         }
 
-        NodeId unpackedDimId;
+        std::vector<int> from;
+        std::vector<int> to;
+        std::vector<int> index;
 
-        if (identifierId) unpackedDimId = fC->Sibling(identifierId);
+        VObjectTypeUnorderedSet insttypes = {
+            VObjectType::slHierarchical_instance,
+            VObjectType::slN_input_gate_instance,
+            VObjectType::slN_output_gate_instance,
+            VObjectType::slPull_gate_instance, VObjectType::slUdp_instance};
 
-        if (unpackedDimId) {
-          // Vector instances
-          while (unpackedDimId) {
-            if (fC->Type(unpackedDimId) == slUnpacked_dimension) {
-              NodeId constantRangeId = fC->Child(unpackedDimId);
-              NodeId leftNode = fC->Child(constantRangeId);
-              NodeId rightNode = fC->Sibling(leftNode);
-              bool validValue;
-              m_helper.checkForLoops(true);
-              int64_t left = m_helper.getValue(validValue, parentDef, fC,
-                                               leftNode, m_compileDesign,
-                                               nullptr, parent, true, false);
-              m_helper.checkForLoops(false);
-              int64_t right = 0;
-              if (rightNode && (fC->Type(rightNode) == slConstant_expression)) {
-                m_helper.checkForLoops(true);
-                right = m_helper.getValue(validValue, parentDef, fC, rightNode,
-                                          m_compileDesign, nullptr, parent,
-                                          true, false);
-                m_helper.checkForLoops(false);
+        std::vector<NodeId> hierInstIds =
+            fC->sl_collect_all(subInstanceId, insttypes, true);
+
+        NodeId hierInstId;
+        if (!hierInstIds.empty()) hierInstId = hierInstIds[0];
+
+        if (!hierInstId) continue;
+
+        while (hierInstId) {
+          NodeId instId = fC->sl_collect(hierInstId, slName_of_instance);
+          NodeId identifierId;
+          if (instId) {
+            identifierId = fC->Child(instId);
+            instName = fC->SymName(identifierId);
+          }
+
+          auto itr =
+              m_instUseClause.find(parent->getFullPathName() + "." + instName);
+          if (itr != m_instUseClause.end()) {
+            UseClause& use = (*itr).second;
+            switch (use.getType()) {
+              case UseClause::UseModule: {
+                std::string name = use.getName();
+                def = design->getComponentDefinition(name);
+                if (def) use.setUsed();
+                break;
               }
-              if (left < right) {
-                from.push_back(left);
-                to.push_back(right);
-                index.push_back(left);
-              } else {
-                from.push_back(right);
-                to.push_back(left);
-                index.push_back(right);
+              case UseClause::UseLib: {
+                for (const auto& lib : use.getLibs()) {
+                  modName = lib + "@" + mname;
+                  def = design->getComponentDefinition(modName);
+                  if (def) {
+                    use.setUsed();
+                    break;
+                  }
+                  break;
+                }
+                break;
               }
+              case UseClause::UseConfig: {
+                std::string useConfig = use.getName();
+                Config* config =
+                    design->getConfigSet()->getMutableConfigByName(useConfig);
+                if (config) {
+                  subConfig = config;
+                  std::string lib = config->getDesignLib();
+                  std::string top = config->getDesignTop();
+                  modName = lib + "@" + top;
+                  def = design->getComponentDefinition(modName);
+                  if (def) use.setUsed();
+                }
+                break;
+              }
+              default:
+                break;
             }
-            unpackedDimId = fC->Sibling(unpackedDimId);
           }
-          recurseInstanceLoop_(from, to, index, 0, def, fC, subInstanceId,
-                               paramOverride, factory, parent, subConfig,
-                               instName, modName, allSubInstances);
-        } else {
-          // Simple instance
-          if (reuseInstance) {
-            child = parent;
-            child->setNodeId(subInstanceId);
-          } else {
-            child = factory->newModuleInstance(def, fC, subInstanceId, parent,
-                                               instName, modName);
-          }
-          if (def && (type != VObjectType::slGate_instantiation)) {
-            elaborateInstance_(def->getFileContents()[0], childId,
-                               paramOverride, factory, child, subConfig,
-                               allSubInstances);
-          } else {
-            // Build black box model
-            std::vector<std::string> params;
-            collectParams_(params, fC, subInstanceId, child, paramOverride);
-            NetlistElaboration* nelab = new NetlistElaboration(m_compileDesign);
-            nelab->elaborateInstance(child);
-            delete nelab;
-          }
-          if (!reuseInstance) parent->addSubInstance(child);
-        }
 
-        hierInstId = fC->Sibling(hierInstId);
+          if (def)
+            childId = def->getNodeIds()[0];
+          else {
+            SymbolTable* st = m_compileDesign->getCompiler()
+                                  ->getErrorContainer()
+                                  ->getSymbolTable();
+            Location loc(
+                st->registerSymbol(fC->getFileName(subInstanceId).string()),
+                fC->Line(subInstanceId), fC->Column(subInstanceId),
+                st->registerSymbol(modName));
+            Error err(ErrorDefinition::ELAB_NO_MODULE_DEFINITION, loc);
+            m_compileDesign->getCompiler()->getErrorContainer()->addError(
+                err, false, false);
+          }
+
+          NodeId unpackedDimId;
+
+          if (identifierId) unpackedDimId = fC->Sibling(identifierId);
+
+          if (unpackedDimId) {
+            // Vector instances
+            while (unpackedDimId) {
+              if (fC->Type(unpackedDimId) == slUnpacked_dimension) {
+                NodeId constantRangeId = fC->Child(unpackedDimId);
+                NodeId leftNode = fC->Child(constantRangeId);
+                NodeId rightNode = fC->Sibling(leftNode);
+                bool validValue;
+                m_helper.checkForLoops(true);
+                int64_t left = m_helper.getValue(validValue, parentDef, fC,
+                                                 leftNode, m_compileDesign,
+                                                 nullptr, parent, true, false);
+                m_helper.checkForLoops(false);
+                int64_t right = 0;
+                if (rightNode &&
+                    (fC->Type(rightNode) == slConstant_expression)) {
+                  m_helper.checkForLoops(true);
+                  right = m_helper.getValue(validValue, parentDef, fC,
+                                            rightNode, m_compileDesign, nullptr,
+                                            parent, true, false);
+                  m_helper.checkForLoops(false);
+                }
+                if (left < right) {
+                  from.push_back(left);
+                  to.push_back(right);
+                  index.push_back(left);
+                } else {
+                  from.push_back(right);
+                  to.push_back(left);
+                  index.push_back(right);
+                }
+              }
+              unpackedDimId = fC->Sibling(unpackedDimId);
+            }
+            recurseInstanceLoop_(from, to, index, 0, def, fC, subInstanceId,
+                                 paramOverride, factory, parent, subConfig,
+                                 instName, modName, allSubInstances);
+          } else {
+            // Simple instance
+            if (reuseInstance) {
+              child = parent;
+              child->setNodeId(subInstanceId);
+            } else {
+              child = factory->newModuleInstance(def, fC, subInstanceId, parent,
+                                                 instName, modName);
+            }
+            if (def && (type != VObjectType::slGate_instantiation)) {
+              elaborateInstance_(def->getFileContents()[0], childId,
+                                 paramOverride, factory, child, subConfig,
+                                 allSubInstances);
+            } else {
+              // Build black box model
+              std::vector<std::string> params;
+              collectParams_(params, fC, subInstanceId, child, paramOverride);
+              NetlistElaboration* nelab =
+                  new NetlistElaboration(m_compileDesign);
+              nelab->elaborateInstance(child);
+              delete nelab;
+            }
+            if (!reuseInstance) parent->addSubInstance(child);
+          }
+
+          hierInstId = fC->Sibling(hierInstId);
+        }
+        // std::cout << "INST: " << modName << " " << instName << " " << def <<
+        // std::endl;
       }
-      // std::cout << "INST: " << modName << " " << instName << " " << def <<
-      // std::endl;
     }
+  }
+  if (!elaborated) {
+    NetlistElaboration* nelab = new NetlistElaboration(m_compileDesign);
+    nelab->elaborateInstance(parent);
+    delete nelab;
   }
 }
 
@@ -1634,7 +1695,7 @@ void DesignElaboration::collectParams_(std::vector<std::string>& params,
         const std::string& name = packageFile->SymName(ident);
         if (UHDM::expr* exp = def->getComplexValue(name)) {
           UHDM::Serializer& s = m_compileDesign->getSerializer();
-          UHDM::ElaboratorListener listener(&s);
+          UHDM::ElaboratorListener listener(&s, false, true);
           UHDM::any* pclone = UHDM::clone_tree(exp, s, &listener);
           instance->setComplexValue(name, (UHDM::expr*)pclone);
         } else {
@@ -2193,18 +2254,23 @@ void DesignElaboration::reduceUnnamedBlocks_() {
            type == VObjectType::slGenerate_module_conditional_statement ||
            type == VObjectType::slLoop_generate_construct ||
            type == VObjectType::slGenerate_module_loop_statement ||
-           type == VObjectType::slGenerate_interface_loop_statement) &&
+           type == VObjectType::slGenerate_interface_loop_statement ||
+           type == VObjectType::slGenerate_block) &&
           (typeP == VObjectType::slConditional_generate_construct ||
            typeP == VObjectType::slGenerate_module_conditional_statement ||
            typeP == VObjectType::slGenerate_interface_conditional_statement ||
            typeP == VObjectType::slLoop_generate_construct ||
            typeP == VObjectType::slGenerate_module_loop_statement ||
-           typeP == VObjectType::slGenerate_interface_loop_statement)) {
+           typeP == VObjectType::slGenerate_interface_loop_statement ||
+           typeP == VObjectType::slGenerate_region)) {
         std::string fullModName = current->getModuleName();
         fullModName = StringUtils::leaf(fullModName);
         std::string fullModNameP = parent->getModuleName();
         fullModNameP = StringUtils::leaf(fullModNameP);
-        if (fullModName.find("genblk") != std::string::npos) {
+        if (typeP == VObjectType::slGenerate_region) {
+          parent->getParent()->overrideParentChild(parent->getParent(), parent,
+                                                   current);
+        } else if (fullModName.find("genblk") != std::string::npos) {
           if (fullModName == fullModNameP)
             parent->getParent()->overrideParentChild(parent->getParent(),
                                                      parent, current);
@@ -2282,6 +2348,7 @@ bool DesignElaboration::bindDataTypes_() {
                compType == VObjectType::slConditional_generate_construct ||
                compType == VObjectType::slLoop_generate_construct ||
                compType == VObjectType::slGenerate_item ||
+               compType == VObjectType::slGenerate_region ||
                compType ==
                    VObjectType::slGenerate_module_conditional_statement ||
                compType ==

@@ -1,4 +1,4 @@
-[INF:CM0023] Creating log file ../../build/tests/SimpleClass1/slpp_all/surelog.log.
+[INF:CM0023] Creating log file ../../build/regression/SimpleClass1/slpp_all/surelog.log.
 
 [WRN:PP0113] ../../third_party/UVM/uvm-1.2/src/macros/uvm_object_defines.svh:1573:9: Unused macro argument "VAL".
 
@@ -787,11 +787,10 @@ Instance tree:
 
 [INF:UH0706] Creating UHDM Model...
 
-[INF:UH0708] Writing UHDM DB: ../../build/tests/SimpleClass1/slpp_all/surelog.uhdm ...
+[INF:UH0708] Writing UHDM DB: ../../build/regression/SimpleClass1/slpp_all/surelog.uhdm ...
 
 [  FATAL] : 0
 [ SYNTAX] : 0
 [  ERROR] : 6
 [WARNING] : 17
 [   NOTE] : 9
-

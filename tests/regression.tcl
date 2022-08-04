@@ -34,7 +34,18 @@ proc printHelp {} {
     puts "               large                             (large tests too)"
     puts "               show_diff                         (Shows text diff)"
     puts "               diff_mode                         (Only diff)"
-    puts "regression.tcl update (Updates the diffs)"
+    puts "regression.tcl update                            (Updates the diffs)"
+    puts "regression.tcl verification                      (Equivalence checking against Yosys parser)"
+    puts "               NO GATE: Both parsers didn't produce gate-level netlist"
+    puts "               S GATE: Surelog parser didn't produce gate-level netlist"
+    puts "               Y GATE: Yosys parser didn't produce gate-level netlist"
+    puts "               INCOM: Incomplete, missing module declaration => Inconclusive"
+    puts "               PASS: Formally equivalent"
+    puts "               DIFF: Formally not-equivalent"
+    puts "               UH PLUG: UHDM Plugin error"
+    puts "               UH YGATE: UHDM Plugin error + Yosys no gate"
+    puts "               MODEL EM: Empty formal model"
+    puts "               MODEL ER: Error in formal model"
 }
 
 set MUTE 0
@@ -84,7 +95,8 @@ set MP_MAX 0
 set LARGE_TESTS 0
 set SHOW_DIFF 0
 set DIFF_MODE 0
-
+set VERIFICATION 0
+set SEARCH_DIR ""
 
 if [regexp {show_diff}  $argv] {
     regsub "show_diff" $argv "" argv
@@ -96,6 +108,10 @@ if [regexp {mute}  $argv] {
     set MUTE 1
 }
 
+if [regexp {verification}  $argv] {
+    regsub "verification" $argv "" argv
+    set VERIFICATION 1
+}
 
 if [regexp {diff_mode}  $argv] {
     regsub "diff_mode" $argv "" argv
@@ -112,7 +128,10 @@ if [regexp {large}  $argv] {
 if [regexp {mt=([0-9]+)} $argv tmp MT_MAX] {
 }
 
-if [regexp {mp=([0-9]+)} $argv tmp MP_MAX] {
+if [regexp {search_dir=([a-zA-Z0-9/\.-]+)} $argv tmp SEARCH_DIR] {
+}
+
+if [regexp {\{search_dir=(.*)\}} $argv tmp SEARCH_DIR] {
 }
 
 if [regexp {debug=([a-z]+)} $argv tmp DEBUG] {
@@ -139,7 +158,7 @@ set TESTTARGET ""
 set ONETEST ""
 if [regexp {tests=([A-Za-z0-9_]+)} $argv tmp TESTTARGET] {
 }
-if [regexp {test=([A-Za-z0-9_]+)} $argv tmp TESTTARGET] {
+if [regexp {test=([A-Za-z0-9_\.]+)} $argv tmp TESTTARGET] {
     set ONETEST $TESTTARGET
 }
 
@@ -168,8 +187,16 @@ if [regexp {path=([A-Za-z0-9_/\.\-\:]+)} $argv tmp EXE_PATH] {
 }
 
 set EXE_NAME "surelog"
+set YOSYS_EXE "yosys"
+set SV2V_EXE "sv2v"
 
 if [regexp {exe_name=([A-Za-z0-9_/\.\-\:]+)} $argv tmp EXE_NAME] {
+}
+
+if [regexp {yosys_exe=([A-Za-z0-9_/\.\-\:]+)} $argv tmp YOSYS_EXE] {
+}
+
+if [regexp {sv2v_exe=([A-Za-z0-9_/\.\-\:]+)} $argv tmp SV2V_EXE] {
 }
 
 set SURELOG_VERSION "$EXE_PATH/$EXE_NAME"
@@ -185,6 +212,10 @@ set REGRESSION_PATH [pwd]
 set SURELOG_COMMAND "$TIME $DEBUG_TOOL $SURELOG_VERSION"
 
 source [project_path]/tests/blacklisted.tcl
+
+if [regexp {black_listed=([A-Za-z0-9_/\.\-\:]+)} $argv tmp blacklisted_file] {
+    source $blacklisted_file
+}
 
 if { $tcl_platform(platform) == "windows" } {
     set BLACK_LIST $WINDOWS_BLACK_LIST
@@ -255,16 +286,29 @@ proc findDirs { basedir pattern {level 0}} {
 
 proc load_tests { } {
     global TESTS TESTS_DIR LONGESTTESTNAME TESTTARGET ONETEST LARGE_TESTS LONG_TESTS MT_MAX MP_MAX BLACK_LIST
+    global VERIFICATION SEARCH_DIR
+
     set dirs "../tests/ ../third_party/tests/"
+    if {$SEARCH_DIR != ""} {
+        set dirs $SEARCH_DIR
+    }
     set fileLists ""
     foreach dir $dirs {
-        append fileList "[findFiles $dir *.sl] "
+        if {$VERIFICATION == 0} {
+            append fileList "[findFiles $dir *.sl] "
+        } else {
+            append fileList "[findFiles $dir *.slv] "
+        }
     }
     set testcommand ""
     set LONGESTTESTNAME 1
     set totaltest 0
     foreach file $fileList {
-        regexp {([a-zA-Z0-9_/:-]+)/([a-zA-Z0-9_-]+)\.sl} $file tmp testdir testname
+        if {$VERIFICATION == 0} {
+            regexp {([a-zA-Z0-9_/:-]+)/([a-zA-Z0-9_-]+)\.sl} $file tmp testdir testname
+        } else {
+            regexp {([a-zA-Z0-9_/:-]+)/([a-zA-Z0-9_\.-]+)\.slv} $file tmp testdir testname
+       }
         regsub [pwd]/ $testdir "" testdir
         incr totaltest
         if {($TESTTARGET != "") && ![regexp $TESTTARGET $testname]} {
@@ -287,7 +331,11 @@ proc load_tests { } {
             set LONGESTTESTNAME [string length $testname]
         }
 
-        set fid [open $testdir/$testname.sl]
+        if {$VERIFICATION == 0} {
+            set fid [open $testdir/$testname.sl]
+        } else {
+             set fid [open $testdir/$testname.slv]
+        }
         set testcommand [read $fid]
         close $fid
 
@@ -376,9 +424,133 @@ proc count_split { string } {
     return [llength [split $string /]]
 }
 
+# Equivalence checking in between Yosys parser and Surelog parser
+proc formal_verification { command testname } {
+    global env SHELL SHELL_ARGS YOSYS_EXE SV2V_EXE TIME
+    set yosys_command ""
+    set output_dir ""
+    for {set i 0} {$i < [llength $command]} {incr i} {
+        set token [lindex $command $i]
+        if {$token == "-o"} {
+            incr i
+            set token [lindex $command $i]
+            set output_dir $token
+            continue
+        }
+        if {$token == "tb.v"} {
+            continue
+        }
+        if [file exist $token] {
+            append yosys_command "$token "
+        }
+    }
+    # Surelog parser
+    set yid [open "$output_dir/surelog.ys" "w"]
+    puts $yid "plugin -i systemverilog"
+    puts $yid "read_systemverilog -mutestdout $yosys_command"
+    puts $yid "synth_xilinx"
+    puts $yid "write_verilog $output_dir/surelog_gate.v"
+    close $yid
+    set surelog_parse ""
+    catch {set out [exec $YOSYS_EXE -s "$output_dir/surelog.ys" -q -q -l $output_dir/surelog.out]} surelog_parse
+    
+    # Yosys parser
+    set yid [open "$output_dir/yosys.ys" "w"]
+    puts $yid "read_verilog -sv $yosys_command"
+    puts $yid "synth_xilinx"
+    puts $yid "write_verilog $output_dir/yosys_gate.v"
+    close $yid
+    set yosys_parse ""
+    catch {set out [exec $YOSYS_EXE -s "$output_dir/yosys.ys"  -q -q -l $output_dir/yosys.out]} yosys_parse
+
+    # If Yosys parser fails, try again with SV2V
+    if [regexp {ERROR:} $yosys_parse] {
+        catch {set out [exec $SV2V_EXE [lindex $yosys_command 0] -w=$output_dir/sv2v.v]} yosys_parse
+        set yid [open "$output_dir/yosys.ys" "w"]
+        puts $yid "read_verilog $output_dir/sv2v.v"
+        puts $yid "synth_xilinx"
+        puts $yid "write_verilog $output_dir/yosys_gate.v"
+        close $yid
+        set yosys_parse ""
+        catch {set out [exec $YOSYS_EXE -s "$output_dir/yosys.ys"  -q -q -l $output_dir/yosys.out]} yosys_parse
+    }
+    
+    if [file exist "$output_dir/surelog.out"] {
+        set fid [open "$output_dir/surelog.out"]
+        set content [read $fid]
+        set topmodule ""
+        regexp {Top module:  \\([a-zA-Z0-9_-]*)} $content tmp topmodule
+        close $fid
+    }
+    # Find cell libraries
+    set yosys_path "$env(HOME)/yosys"
+    set cells_sim $yosys_path/share/xilinx/cells_sim.v
+    set cells_xtra $yosys_path/share/xilinx/cells_xtra.v
+    if [file exist [file dirname $YOSYS_EXE]/../share/yosys/xilinx/cells_sim.v] {
+        set yosys_path [file dirname $YOSYS_EXE]/..
+        set cells_sim $yosys_path/share/yosys/xilinx/cells_sim.v
+        set cells_xtra $yosys_path/share/yosys/xilinx/cells_xtra.v
+    }
+    # Equivalence checking 
+    if {($surelog_parse == "") && ($yosys_parse == "")} {
+        set yid [open "$output_dir/equiv.ys" "w"]
+        puts $yid "read_verilog $output_dir/surelog_gate.v $cells_sim $cells_xtra"
+        puts $yid "prep -flatten -top $topmodule"
+        puts $yid "splitnets -ports;;"
+        puts $yid "design -stash surelog"
+        puts $yid "read_verilog $output_dir/yosys_gate.v $cells_sim $cells_xtra"
+        puts $yid "splitnets -ports;;"
+        puts $yid "prep -flatten -top $topmodule"
+        puts $yid "design -stash yosys"
+        puts $yid "design -copy-from surelog -as surelog $topmodule"
+        puts $yid "design -copy-from yosys -as yosys $topmodule"
+        puts $yid "equiv_make surelog yosys equiv"
+        puts $yid "prep -flatten -top equiv"
+
+        puts $yid "opt_clean -purge"
+        #puts $yid "show -prefix equiv-prep -colors 1 -stretch"
+
+        puts $yid "opt -full"
+        puts $yid "equiv_simple -seq 5"
+        puts $yid "equiv_induct -seq 5"
+        puts $yid "equiv_status -assert"
+        close $yid
+        set equiv_run ""
+        catch {exec $SHELL $SHELL_ARGS "$TIME $YOSYS_EXE -s $output_dir/equiv.ys -q -q -l $output_dir/equiv.out"}  equiv_run
+        set proven 0
+        set unproven 0
+        if [file exist "$output_dir/equiv.out"] {
+            set fid [open "$output_dir/equiv.out"]
+            set content [read $fid]
+            close $fid
+            if [regexp {Equivalence successfully proven} $content] {
+                set proven 1
+            } elseif {[regexp {Unproven} $content] || [regexp {[0-9]+ unproven} $content]} {
+                set unproven 1
+            } elseif [regexp {ERROR: Can't find gold module surelog} $content] {
+                return [list "INVALID_MODEL_SURELOG" $equiv_run]
+            } elseif [regexp {ERROR: Can't find gate module yosys} $content] {
+                return [list "INVALID_MODEL_YOSYS" $equiv_run]
+            } elseif [regexp {Proved 0 previously unproven \$equiv cells\.} $content] {
+                return [list "EMPTY_MODEL" $equiv_run] 
+            } elseif [regexp {ERROR:} $content] {
+                return [list "ERROR_MODEL" ""] 
+            }  
+        }
+        if {$proven} {
+            return [list "EQUIVALENT" $equiv_run] 
+        }
+        if {$unproven} {
+            return [list "NOT_EQUIVALENT" $equiv_run]  
+        }
+    }
+    return [list "INCONCLUSIVE" ""] 
+}
+
 proc run_regression { } {
     global TESTS TESTS_DIR SURELOG_COMMAND UHDM_DUMP_COMMAND LONGESTTESTNAME TESTTARGET ONETEST UPDATE USER ELAPSED PRIOR_USER PRIOR_ELAPSED MUTE TIME DEBUG
     global DIFF_TESTS PRIOR_MAX_MEM MAX_MEM MAX_TIME PRIOR_MAX_TIME SHOW_DETAILS MT_MAX MP_MAX REGRESSION_PATH LARGE_TESTS LONG_TESTS DIFF_MODE SHELL SHELL_ARGS
+    global VERIFICATION STATUS_STATS STATUS_TESTS
     set overrallpass "PASS"
 
     set w1 $LONGESTTESTNAME
@@ -394,6 +566,30 @@ proc run_regression { } {
     log [format "| %-*s | %-*s | %*s | %*s | %*s | %*s | %*s | %*s | %*s |" $w1 "TESTNAME" $w2 "STATUS" $w6 "FATAL"  $w2 "SYNTAX" $w4 "ERROR" $w2 "WARNING"  $w7 "NOTE-UHDM"  $w5 "TIME" $w5 "MEM(Mb)"]
     log $sep
 
+    if {$UPDATE == 1} {
+        if {$VERIFICATION == 1} {
+            if [file exist $REGRESSION_PATH/tests/formal_status.tcl] {
+                if [file exist $REGRESSION_PATH/../formal/formal_status.tcl] {
+                    source $REGRESSION_PATH/../formal/formal_status.tcl
+                }
+                source $REGRESSION_PATH/tests/formal_status.tcl
+                set fidStatus [open $REGRESSION_PATH/../formal/formal_status.tcl "w"]
+                foreach item [array names LOG_STATUS_TESTS] {
+                    puts $fidStatus "set LOG_STATUS_TESTS($item) \"$LOG_STATUS_TESTS($item)\""
+                }
+                close $fidStatus
+                puts "Updated Formal status for [array size LOG_STATUS_TESTS] tests."
+                exit 0
+            }
+        }
+        return ""
+    }
+    if {$VERIFICATION == 1} {
+        if [file exist $REGRESSION_PATH/../formal/formal_status.tcl] {
+            source $REGRESSION_PATH/../formal/formal_status.tcl
+        }
+    }
+    
     foreach testname [lsort -dictionary [array names TESTS]] {
         set time_result ""
         set result ""
@@ -432,22 +628,24 @@ proc run_regression { } {
             file delete -force "$REGRESSION_PATH/tests/$test/valgrind.log"
         }
         if {$UPDATE == 1} {
-            if [file exist "$REGRESSION_PATH/tests/$test/${testname}.log"] {
-                log  [format "| %-*s | Copying $REGRESSION_PATH/tests/$test/${testname}.log to $testdir/${testname}.log" $w1 $testname]
-
-                set fid [open "$REGRESSION_PATH/tests/$test/${testname}.log" "r"]
-                set content [read $fid]
-                close $fid
-                # Canonicalize things that should be neutral in diff outputs
-                regsub -all {[a-zA-Z_/-]*/Surelog/} $content {${SURELOG_DIR}/} content
-                regsub -all {[0-9]+\.[0-9]{3}([0-9]{3})?s?} $content {t.ttts} content
-                set outfd [open "$testdir/${testname}.log" "w"]
-                puts -nonewline $outfd $content
-                close $outfd
-                continue
-            } else {
-                log  [format "| %-*s | No action" $w1 $testname]
-                continue
+            if {$VERIFICATION == 0} {
+                if [file exist "$REGRESSION_PATH/tests/$test/${testname}.log"] {
+                    log  [format "| %-*s | Copying $REGRESSION_PATH/tests/$test/${testname}.log to $testdir/${testname}.log" $w1 $testname]
+                    
+                    set fid [open "$REGRESSION_PATH/tests/$test/${testname}.log" "r"]
+                    set content [read $fid]
+                    close $fid
+                    # Canonicalize things that should be neutral in diff outputs
+                    regsub -all {[a-zA-Z_/-]*/Surelog/} $content {${SURELOG_DIR}/} content
+                    regsub -all {[0-9]+\.[0-9]{3}([0-9]{3})?s?} $content {t.ttts} content
+                    set outfd [open "$testdir/${testname}.log" "w"]
+                    puts -nonewline $outfd $content
+                    close $outfd
+                    continue
+                } else {
+                    log  [format "| %-*s | No action" $w1 $testname]
+                    continue
+                }
             }
         }
 
@@ -463,6 +661,7 @@ proc run_regression { } {
             }
         }
         set passstatus "PASS"
+        set verification_result ""
         if {$DIFF_MODE == 0} {
             set path [file dirname $REGRESSION_PATH]
             regsub -all $path $testdir "" path
@@ -504,17 +703,25 @@ proc run_regression { } {
                     set FINAL_COMMAND "$TIME valgrind --tool=memcheck --log-file=$REGRESSION_PATH/tests/$test/valgrind.log $surelog"
                     puts "\n$FINAL_COMMAND\n"
                 }
+
                 catch {set time_result [exec $SHELL $SHELL_ARGS "$FINAL_COMMAND $command > $REGRESSION_PATH/tests/$test/${testname}.log"]} time_result
-                if [file exist $REGRESSION_PATH/tests/$test/slpp_all/surelog.uhdm] {
-                    if [catch {exec $SHELL $SHELL_ARGS "$UHDM_DUMP_COMMAND $REGRESSION_PATH/tests/$test/slpp_all/surelog.uhdm > $REGRESSION_PATH/tests/$test/uhdm.dump"}] {
-                        set passstatus "FAILDUMP"
-                        set overrallpass "FAIL"
+                if {$VERIFICATION == 0} {
+       
+                    if [file exist $REGRESSION_PATH/tests/$test/slpp_all/surelog.uhdm] {
+                        if [catch {exec $SHELL $SHELL_ARGS "$UHDM_DUMP_COMMAND $REGRESSION_PATH/tests/$test/slpp_all/surelog.uhdm > $REGRESSION_PATH/tests/$test/uhdm.dump"}] {
+                            set passstatus "FAILDUMP"
+                            set overrallpass "FAIL"
+                        }
+                    } elseif [file exist $REGRESSION_PATH/tests/$test/slpp_unit/surelog.uhdm] {
+                        if [catch {exec $SHELL $SHELL_ARGS "$UHDM_DUMP_COMMAND $REGRESSION_PATH/tests/$test/slpp_unit/surelog.uhdm > $REGRESSION_PATH/tests/$test/uhdm.dump"}] {
+                            set passstatus "FAILDUMP"
+                            set overrallpass "FAIL"
+                        }
                     }
-                } elseif [file exist $REGRESSION_PATH/tests/$test/slpp_unit/surelog.uhdm] {
-                    if [catch {exec $SHELL $SHELL_ARGS "$UHDM_DUMP_COMMAND $REGRESSION_PATH/tests/$test/slpp_unit/surelog.uhdm > $REGRESSION_PATH/tests/$test/uhdm.dump"}] {
-                        set passstatus "FAILDUMP"
-                        set overrallpass "FAIL"
-                    }
+                } else {
+                    set verification_result [formal_verification $command $testname]
+                    set time_result [lindex $verification_result 1]
+                    set verification_result [lindex $verification_result 0]
                 }
             }
         }
@@ -577,6 +784,13 @@ proc run_regression { } {
         set elapsed 0
         set cpu 0
         foreach {fatals errors warnings notes details syntax} [count_messages $result] {}
+        if {$VERIFICATION} {
+            set log_fatals $fatals
+            set log_syntax $syntax
+            set log_errors $errors
+            set log_warnings $warnings
+            set log_notes $notes
+        }
         if [regexp {([0-9\.:]+)user [0-9\.:]+system ([0-9]+):([0-9\.]+)elapsed ([0-9]+)%CPU} $time_result tmp user elapsed_min elapsed cpu] {
             set user [expr int($user)]
             set elapsed [expr int(($elapsed_min *60) + $elapsed)]
@@ -606,76 +820,77 @@ proc run_regression { } {
             close $fid
             set no_previous_time_content 0
         }
-
         if [file exists "$testname.log"] {
             set fid [open "$testname.log" "r"]
             set content [read $fid]
             close $fid
             foreach {log_fatals log_errors log_warnings log_notes log_details log_syntax} [count_messages $content] {}
-            set prior_user 0
-            set prior_elapsed_min 0
-            set prior_elapsed 0
-            set cpu 0
-            regexp {([0-9\.]+)user [0-9\.:]+system ([0-9]+):([0-9\.]+)elapsed ([0-9]+)%CPU} $time_content tmp prior_user prior_elapsed_min prior_elapsed cpu
-            set prior_user [expr int($prior_user)]
-            set prior_elapsed [expr int(($prior_elapsed_min *60) + $prior_elapsed)]
-            set PRIOR_USER    [expr $PRIOR_USER + $prior_user]
-            set PRIOR_ELAPSED [expr $PRIOR_ELAPSED +  $prior_elapsed]
-            if {$PRIOR_MAX_TIME < $prior_elapsed} {
-                set PRIOR_MAX_TIME $prior_elapsed
-            }
-            if {$DIFF_MODE == 1} {
-                set SPEED [format "%*s " 4 "${prior_elapsed}s"]
+        }
+        
+        set prior_user 0
+        set prior_elapsed_min 0
+        set prior_elapsed 0
+        set cpu 0
+        regexp {([0-9\.]+)user [0-9\.:]+system ([0-9]+):([0-9\.]+)elapsed ([0-9]+)%CPU} $time_content tmp prior_user prior_elapsed_min prior_elapsed cpu
+        set prior_user [expr int($prior_user)]
+        set prior_elapsed [expr int(($prior_elapsed_min *60) + $prior_elapsed)]
+        set PRIOR_USER    [expr $PRIOR_USER + $prior_user]
+        set PRIOR_ELAPSED [expr $PRIOR_ELAPSED +  $prior_elapsed]
+        if {$PRIOR_MAX_TIME < $prior_elapsed} {
+            set PRIOR_MAX_TIME $prior_elapsed
+        }
+        if {($DIFF_MODE == 1) || ($VERIFICATION == 1)} {
+            set SPEED [format "%*s " 4 "${prior_elapsed}s"]
+            set FASTER_OR_SLOWER 1
+        } elseif [expr ($elapsed > $prior_elapsed) && ($no_previous_time_content == 0)] {
+            set SPEED [format "%*s %*s " 3 "${elapsed}s" 3 "+[expr $elapsed - $prior_elapsed]"]
                 set FASTER_OR_SLOWER 1
-            } elseif [expr ($elapsed > $prior_elapsed) && ($no_previous_time_content == 0)] {
-                set SPEED [format "%*s %*s " 3 "${elapsed}s" 3 "+[expr $elapsed - $prior_elapsed]"]
-                set FASTER_OR_SLOWER 1
-            } elseif [expr ($elapsed == $prior_elapsed) || ($no_previous_time_content)] {
-                set SPEED [format "%*s " 4 "${elapsed}s"]
-            } else {
-                set SPEED [format "%*s %*s " 3 "${elapsed}s" 3 "-[expr $prior_elapsed - $elapsed]"]
-                set FASTER_OR_SLOWER 1
+        } elseif [expr ($elapsed == $prior_elapsed) || ($no_previous_time_content)] {
+            set SPEED [format "%*s " 4 "${elapsed}s"]
+        } else {
+            set SPEED [format "%*s %*s " 3 "${elapsed}s" 3 "-[expr $prior_elapsed - $elapsed]"]
+            set FASTER_OR_SLOWER 1
+        }
+        
+        set prior_mem 0
+        regexp {([0-9]+)maxresident} $time_content tmp prior_mem
+        set prior_mem [expr $prior_mem / 1024]
+        if {$PRIOR_MAX_MEM < $prior_mem} {
+            set PRIOR_MAX_MEM $prior_mem
+        }
+        if {($DIFF_MODE == 1) || ($VERIFICATION == 1)} {
+            set MEM [format "%*s " 4 "${prior_mem}"]
+        } elseif [expr ($mem > $prior_mem) && ($no_previous_time_content == 0)] {
+            set MEM  [format "%*s %*s " 3 "${mem}" 3 "+[expr $mem - $prior_mem]"]
+            set DIFF_MEM 1
+        } elseif  [expr ($mem == $prior_mem) || ($no_previous_time_content)] {
+            set MEM [format "%*s " 4 "${mem}"]
+        } else {
+            set MEM  [format "%*s %*s " 3 "${mem}" 3 "-[expr $prior_mem - $mem]"]
+            set DIFF_MEM 1
+        }
+        
+        if {($fatals != $log_fatals) || ($errors != $log_errors) || ($warnings != $log_warnings) || ($notes != $log_notes) || ($syntax != $log_syntax)} {
+            set overrallpass "DIFF"
+            set passstatus "DIFF"
+            set DIFF_TESTS($testname) $test
+            if {$fatals != $log_fatals} {
+                set fatals "$fatals ([expr $fatals - $log_fatals])"
             }
-
-            set prior_mem 0
-            regexp {([0-9]+)maxresident} $time_content tmp prior_mem
-            set prior_mem [expr $prior_mem / 1024]
-            if {$PRIOR_MAX_MEM < $prior_mem} {
-                set PRIOR_MAX_MEM $prior_mem
+            if {$errors != $log_errors} {
+                set errors "$errors ([expr $errors - $log_errors])"
             }
-            if {$DIFF_MODE == 1} {
-                set MEM [format "%*s " 4 "${prior_mem}"]
-            } elseif [expr ($mem > $prior_mem) && ($no_previous_time_content == 0)] {
-                set MEM  [format "%*s %*s " 3 "${mem}" 3 "+[expr $mem - $prior_mem]"]
-                set DIFF_MEM 1
-            } elseif  [expr ($mem == $prior_mem) || ($no_previous_time_content)] {
-                set MEM [format "%*s " 4 "${mem}"]
-            } else {
-                set MEM  [format "%*s %*s " 3 "${mem}" 3 "-[expr $prior_mem - $mem]"]
-                set DIFF_MEM 1
+            if {$warnings != $log_warnings} {
+                set warnings "$warnings ([expr $warnings - $log_warnings])"
             }
-
-            if {($fatals != $log_fatals) || ($errors != $log_errors) || ($warnings != $log_warnings) || ($notes != $log_notes) || ($syntax != $log_syntax)} {
-                set overrallpass "DIFF"
-                set passstatus "DIFF"
-                set DIFF_TESTS($testname) $test
-                if {$fatals != $log_fatals} {
-                    set fatals "$fatals ([expr $fatals - $log_fatals])"
-                }
-                if {$errors != $log_errors} {
-                    set errors "$errors ([expr $errors - $log_errors])"
-                }
-                if {$warnings != $log_warnings} {
-                    set warnings "$warnings ([expr $warnings - $log_warnings])"
-                }
-                if {$notes != $log_notes} {
-                    set notes "$notes ([expr $notes - $log_notes])"
-                }
-                if {$syntax != $log_syntax} {
-                    set syntax "$syntax ([expr $syntax - $log_syntax])"
-                }
+            if {$notes != $log_notes} {
+                set notes "$notes ([expr $notes - $log_notes])"
+            }
+            if {$syntax != $log_syntax} {
+                set syntax "$syntax ([expr $syntax - $log_syntax])"
             }
         }
+        
 
         if [file exists "$REGRESSION_PATH/tests/$test/valgrind.log"] {
             set fid [open "$REGRESSION_PATH/tests/$test/valgrind.log" "r"]
@@ -689,6 +904,51 @@ proc run_regression { } {
             }
         }
 
+        if {$verification_result == "EQUIVALENT"} {
+            set passstatus "PASS"
+        } elseif {$verification_result == "NOT_EQUIVALENT"} {
+            set passstatus "DIFF"
+        } elseif {$verification_result == "INVALID_MODEL_SURELOG"} {
+            set passstatus "S GATE"
+        } elseif {$verification_result == "INVALID_MODEL_YOSYS"} {
+            set passstatus "Y GATE"
+        } elseif {$verification_result == "EMPTY_MODEL"} {
+            set passstatus "MODEL EM"
+        } elseif {$verification_result == "ERROR_MODEL"} {
+            set passstatus "MODEL ER"
+        } elseif {$verification_result == "INCONCLUSIVE"} {
+            set passstatus "   "
+            set fid [open "$REGRESSION_PATH/tests/$test/surelog.out" "r"]
+            set result [read $fid]
+            close $fid
+            if [regexp {Nb undefined modules: [1-9][0-9]*} $result] {
+                set passstatus "INCOM"
+            }           
+            if ![regexp {Dumping module } $result] {
+                set passstatus "S GATE"
+            }
+            set fid [open "$REGRESSION_PATH/tests/$test/surelog.out" "r"]
+            set surelog [read $fid]
+            close $fid
+            foreach line [split $surelog "\n"] {
+                if [regexp {^ERROR: } $line] {
+                    set passstatus "UH PLUG"
+                }
+            }
+            set fid [open "$REGRESSION_PATH/tests/$test/yosys.out" "r"]
+            set yosys [read $fid]
+            close $fid
+            if ![regexp {Dumping module } $yosys] {
+                if {$passstatus == "S GATE"} {
+                    set passstatus "NO GATE"
+                } elseif {$passstatus == "UH PLUG"} {
+                   set passstatus "UH YGATE" 
+                } else {
+                    set passstatus "Y GATE"
+                }
+            }
+        } 
+        
         if {($fatals == -1) || ($errors == -1) || ($warnings == -1) || ($notes == -1)} {
             if {$segfault == 0} {
                 set segfault 1
@@ -701,6 +961,29 @@ proc run_regression { } {
             set fatals "SEGFAULT"
         }
 
+        if [info exist STATUS_STATS($passstatus)] {
+            set STATUS_STATS($passstatus) [expr $STATUS_STATS($passstatus) + 1]
+        } else {
+            set STATUS_STATS($passstatus) 1
+        }
+        set STATUS_TESTS($test) $passstatus
+        if [info exist LOG_STATUS_TESTS($test)] {
+            set previous_status $LOG_STATUS_TESTS($test)
+            if {$previous_status == "PASS"} {
+                if {$passstatus != "PASS"} {
+                    puts "REGRESS $test (PASS -> $passstatus)"
+                }
+            } else {
+                if {$passstatus == "PASS"} {
+                    puts "FIXED $test ($passstatus -> PASS)"
+                } else {
+                    if {$previous_status != $passstatus} {
+                        puts "CHANGED $test ($previous_status -> $passstatus)"
+                    }
+                }
+            }
+        }
+        
         log [format " %-*s | %*s | %*s | %*s | %*s | %*s | %*s | %*s |" $w2 $passstatus $w6 $fatals $w2 $syntax $w4 $errors $w2 $warnings $w7 $notes $w5 $SPEED $w5 $MEM ]
         flush stdout
         if {$SHOW_DETAILS == 1} {
@@ -741,10 +1024,23 @@ proc run_regression { } {
             file delete -force $REGRESSION_PATH/tests/$test/uhdm.dump
             file delete -force $testdir/uhdm.dump
         }
-
-        cd $REGRESSION_PATH/tests
+        if {$VERIFICATION == 0} {
+            cd $REGRESSION_PATH/tests
+        } else {
+            cd $REGRESSION_PATH
+        }
     }
     log $sep
+    log ""
+    foreach item [array names STATUS_STATS] {
+        log " $item : $STATUS_STATS($item)"
+    }
+
+    set fidStatus [open $REGRESSION_PATH/tests/formal_status.tcl "w"]
+    foreach item [array names STATUS_TESTS] {
+        puts $fidStatus "set LOG_STATUS_TESTS($item) \"$STATUS_TESTS($item)\""
+    }
+    close $fidStatus
     return $overrallpass
 }
 
